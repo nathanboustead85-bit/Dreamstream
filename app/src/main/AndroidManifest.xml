@@ -1,16 +1,26 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Internet access for IPTV streaming -->
+    <uses-permission
+        android:name="android.permission.INTERNET" />
+
+    <!-- Network connection status -->
+    <uses-permission
+        android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <application
         android:allowBackup="true"
-        android:label="DreamStream"
-        android:theme="@android:style/Theme.Material.NoActionBar">
+        android:label="DreamStream Ultra"
+        android:theme="@android:style/Theme.Material.NoActionBar"
+        android:usesCleartextTraffic="true"
+        android:supportsRtl="true">
 
+        <!-- Main application startup -->
         <activity
             android:name=".MainActivity"
-            android:exported="true">
+            android:exported="true"
+            android:screenOrientation="unspecified">
 
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
