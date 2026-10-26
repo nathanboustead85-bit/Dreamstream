@@ -1,28 +1,30 @@
 package com.dreamstream.app.ui.home
 
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.material3.Button
-import androidx.compose.material3.Text
+import androidx.compose.foundation.layout.*
+import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 
 @Composable
-fun HomeScreen() {
+fun HomeScreen(
+    onLiveTv: () -> Unit
+) {
     Column(
         modifier = Modifier
             .fillMaxSize()
             .padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        Text("DreamStream")
+        Text(
+            "DREAMSTREAM ULTRA",
+            style = MaterialTheme.typography.headlineMedium
+        )
+
+        Text("Your entertainment dashboard")
 
         Button(
-            onClick = {},
+            onClick = onLiveTv,
             modifier = Modifier.fillMaxWidth()
         ) {
             Text("LIVE TV")
