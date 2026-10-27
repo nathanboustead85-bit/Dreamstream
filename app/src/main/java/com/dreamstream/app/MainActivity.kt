@@ -1,5 +1,7 @@
 package com.dreamstream.app
 
+import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -11,6 +13,7 @@ import androidx.compose.material3.Surface
 import com.dreamstream.app.ui.theme.DreamStreamTheme
 import com.dreamstream.app.ui.login.LoginScreen
 import com.dreamstream.app.ui.home.HomeScreen
+import com.dreamstream.app.ui.home.TvHomeScreen
 import com.dreamstream.app.ui.live.LiveTvScreen
 import com.dreamstream.app.ui.vod.MoviesScreen
 import com.dreamstream.app.ui.vod.SeriesScreen
@@ -21,6 +24,15 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        val isTvDevice =
+            packageManager.hasSystemFeature(
+                PackageManager.FEATURE_LEANBACK
+            ) ||
+            (
+                resources.configuration.uiMode and
+                Configuration.UI_MODE_TYPE_MASK
+            ) == Configuration.UI_MODE_TYPE_TELEVISION
 
         setContent {
             DreamStreamTheme {
@@ -77,17 +89,33 @@ class MainActivity : ComponentActivity() {
                             }
                         )
 
-                        "home" -> HomeScreen(
-                            onLiveTv = {
-                                screen = "live"
-                            },
-                            onMovies = {
-                                screen = "movies"
-                            },
-                            onSeries = {
-                                screen = "series"
+                        "home" -> {
+                            if (isTvDevice) {
+                                TvHomeScreen(
+                                    onLiveTv = {
+                                        screen = "live"
+                                    },
+                                    onMovies = {
+                                        screen = "movies"
+                                    },
+                                    onSeries = {
+                                        screen = "series"
+                                    }
+                                )
+                            } else {
+                                HomeScreen(
+                                    onLiveTv = {
+                                        screen = "live"
+                                    },
+                                    onMovies = {
+                                        screen = "movies"
+                                    },
+                                    onSeries = {
+                                        screen = "series"
+                                    }
+                                )
                             }
-                        )
+                        }
 
                         "live" -> LiveTvScreen(
                             server = server,
