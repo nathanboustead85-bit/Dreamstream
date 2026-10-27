@@ -17,6 +17,8 @@
 
     <application
         android:allowBackup="true"
+        android:icon="@drawable/dreamstream_icon"
+        android:roundIcon="@drawable/dreamstream_icon"
         android:label="DreamStream Ultra"
         android:theme="@android:style/Theme.Material.NoActionBar"
         android:usesCleartextTraffic="true"
