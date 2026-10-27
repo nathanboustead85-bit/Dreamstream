@@ -48,12 +48,10 @@ class MainActivity : ComponentActivity() {
 
                     BackHandler(
                         enabled = screen != "login" &&
-                            screen != "home"
+                            screen != "home" &&
+                            screen != "player"
                     ) {
-                        screen = when (screen) {
-                            "player" -> returnScreen
-                            else -> "home"
-                        }
+                        screen = "home"
                     }
 
                     when (screen) {
@@ -121,7 +119,10 @@ class MainActivity : ComponentActivity() {
                         )
 
                         "player" -> VideoPlayer(
-                            streamUrl = streamUrl
+                            streamUrl = streamUrl,
+                            onBack = {
+                                screen = returnScreen
+                            }
                         )
                     }
                 }
