@@ -1,8 +1,8 @@
 package com.dreamstream.app.ui.vod
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -14,11 +14,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.activity.compose.BackHandler
 import coil.compose.AsyncImage
+import com.dreamstream.app.data.FavouritesStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -77,10 +78,13 @@ private fun api(
         connection.readTimeout = 30000
 
         if (connection.responseCode != 200) {
-            error("Server returned HTTP ${connection.responseCode}")
+            error(
+                "Server returned HTTP ${connection.responseCode}"
+            )
         }
 
-        return connection.inputStream.bufferedReader()
+        return connection.inputStream
+            .bufferedReader()
             .use { it.readText() }
     } finally {
         connection.disconnect()
@@ -96,8 +100,11 @@ private fun playbackUrl(
     extension: String
 ): String {
     val ext = extension.lowercase()
-        .takeIf { it in listOf("mp4", "mkv", "avi", "ts", "m3u8") }
-        ?: "mp4"
+        .takeIf {
+            it in listOf(
+                "mp4", "mkv", "avi", "ts", "m3u8"
+            )
+        } ?: "mp4"
 
     return server.trimEnd('/') +
         "/$type/${enc(username)}/${enc(password)}/" +
@@ -109,12 +116,18 @@ fun MoviesScreen(
     server: String,
     username: String,
     password: String,
+    initialFavourites: Boolean = false,
     onPlay: (String) -> Unit,
     onBack: () -> Unit
 ) {
     MediaBrowser(
-        server, username, password,
-        false, onPlay, onBack
+        server = server,
+        username = username,
+        password = password,
+        isSeries = false,
+        initialFavourites = initialFavourites,
+        onPlay = onPlay,
+        onBack = onBack
     )
 }
 
@@ -123,12 +136,18 @@ fun SeriesScreen(
     server: String,
     username: String,
     password: String,
+    initialFavourites: Boolean = false,
     onPlay: (String) -> Unit,
     onBack: () -> Unit
 ) {
     MediaBrowser(
-        server, username, password,
-        true, onPlay, onBack
+        server = server,
+        username = username,
+        password = password,
+        isSeries = true,
+        initialFavourites = initialFavourites,
+        onPlay = onPlay,
+        onBack = onBack
     )
 }
 
@@ -138,111 +157,254 @@ private fun MediaBrowser(
     username: String,
     password: String,
     isSeries: Boolean,
+    initialFavourites: Boolean,
     onPlay: (String) -> Unit,
     onBack: () -> Unit
 ) {
-    var categories by remember {
-        mutableStateOf<List<Category>>(emptyList())
+    val context = LocalContext.current
+
+    val favouriteType =
+        if (isSeries) "series" else "movie"
+
+    var favourites by remember(
+        server,
+        username,
+        favouriteType
+    ) {
+        mutableStateOf(
+            FavouritesStore.get(
+                context,
+                server,
+                username,
+                favouriteType
+            )
+        )
     }
-    var media by remember {
-        mutableStateOf<List<MediaItem>>(emptyList())
+
+    fun toggleFavourite(item: MediaItem) {
+        favourites = FavouritesStore.toggle(
+            context,
+            server,
+            username,
+            favouriteType,
+            item.id.toString()
+        )
     }
-    var category by remember { mutableStateOf("ALL") }
+
+    var categories by remember(
+        server,
+        username,
+        isSeries
+    ) {
+        mutableStateOf<List<Category>>(
+            emptyList()
+        )
+    }
+
+    var media by remember(
+        server,
+        username,
+        isSeries
+    ) {
+        mutableStateOf<List<MediaItem>>(
+            emptyList()
+        )
+    }
+
+    var category by remember(
+        initialFavourites,
+        isSeries
+    ) {
+        mutableStateOf(
+            if (initialFavourites) "FAV" else "ALL"
+        )
+    }
+
     var selected by remember {
         mutableStateOf<MediaItem?>(null)
     }
-    var episodes by remember {
-        mutableStateOf<List<Episode>>(emptyList())
-    }
-    var season by remember { mutableIntStateOf(-1) }
-    var description by remember { mutableStateOf("") }
-    var search by remember { mutableStateOf("") }
-    var loading by remember { mutableStateOf(true) }
-    var detailLoading by remember { mutableStateOf(false) }
-    var errorText by remember { mutableStateOf("") }
 
-    LaunchedEffect(server, username, password, isSeries) {
+    var episodes by remember {
+        mutableStateOf<List<Episode>>(
+            emptyList()
+        )
+    }
+
+    var season by remember {
+        mutableIntStateOf(-1)
+    }
+
+    var description by remember {
+        mutableStateOf("")
+    }
+
+    var search by remember {
+        mutableStateOf("")
+    }
+
+    var loading by remember {
+        mutableStateOf(true)
+    }
+
+    var detailLoading by remember {
+        mutableStateOf(false)
+    }
+
+    var errorText by remember {
+        mutableStateOf("")
+    }
+
+    LaunchedEffect(
+        server,
+        username,
+        password,
+        isSeries
+    ) {
         loading = true
         errorText = ""
 
         try {
-            val result = withContext(Dispatchers.IO) {
+            val result = withContext(
+                Dispatchers.IO
+            ) {
                 val categoryAction =
-                    if (isSeries) "get_series_categories"
-                    else "get_vod_categories"
+                    if (isSeries) {
+                        "get_series_categories"
+                    } else {
+                        "get_vod_categories"
+                    }
 
                 val listAction =
-                    if (isSeries) "get_series"
-                    else "get_vod_streams"
+                    if (isSeries) {
+                        "get_series"
+                    } else {
+                        "get_vod_streams"
+                    }
 
                 val categoryJson = JSONArray(
-                    api(server, username, password, categoryAction)
+                    api(
+                        server,
+                        username,
+                        password,
+                        categoryAction
+                    )
                 )
+
                 val mediaJson = JSONArray(
-                    api(server, username, password, listAction)
+                    api(
+                        server,
+                        username,
+                        password,
+                        listAction
+                    )
                 )
 
-                val parsedCategories = mutableListOf<Category>()
-                val parsedMedia = mutableListOf<MediaItem>()
+                val parsedCategories =
+                    mutableListOf<Category>()
 
-                for (i in 0 until categoryJson.length()) {
-                    val obj = categoryJson.optJSONObject(i)
-                        ?: continue
+                val parsedMedia =
+                    mutableListOf<MediaItem>()
+
+                for (
+                    i in 0 until categoryJson.length()
+                ) {
+                    val obj =
+                        categoryJson.optJSONObject(i)
+                            ?: continue
 
                     parsedCategories.add(
                         Category(
-                            obj.optString("category_id"),
-                            obj.optString("category_name", "Other")
+                            id = obj.optString(
+                                "category_id"
+                            ),
+                            name = obj.optString(
+                                "category_name",
+                                "Other"
+                            )
                         )
                     )
                 }
 
-                for (i in 0 until mediaJson.length()) {
-                    val obj = mediaJson.optJSONObject(i)
-                        ?: continue
+                for (
+                    i in 0 until mediaJson.length()
+                ) {
+                    val obj =
+                        mediaJson.optJSONObject(i)
+                            ?: continue
 
                     val id = obj.optInt(
-                        if (isSeries) "series_id" else "stream_id",
+                        if (isSeries) {
+                            "series_id"
+                        } else {
+                            "stream_id"
+                        },
                         -1
                     )
+
                     if (id < 0) continue
 
                     parsedMedia.add(
                         MediaItem(
                             id = id,
-                            name = obj.optString("name", "Untitled"),
-                            categoryId = obj.optString("category_id"),
+                            name = obj.optString(
+                                "name",
+                                "Untitled"
+                            ),
+                            categoryId = obj.optString(
+                                "category_id"
+                            ),
                             extension = obj.optString(
-                                "container_extension", "mp4"
+                                "container_extension",
+                                "mp4"
                             ),
                             description = obj.optString(
                                 "plot",
-                                obj.optString("description", "")
+                                obj.optString(
+                                    "description",
+                                    ""
+                                )
                             ),
                             poster = if (isSeries) {
                                 obj.optString("cover")
                             } else {
-                                obj.optString("stream_icon")
+                                obj.optString(
+                                    "stream_icon"
+                                )
                             }
                         )
                     )
                 }
 
-                Pair(parsedCategories, parsedMedia)
+                Pair(
+                    parsedCategories,
+                    parsedMedia
+                )
             }
 
             categories = result.first
             media = result.second
+
         } catch (e: Exception) {
-            errorText = "Unable to load library: " +
-                (e.localizedMessage ?: "Unknown error")
+            errorText =
+                "Unable to load library: " +
+                    (
+                        e.localizedMessage
+                            ?: "Unknown error"
+                    )
         } finally {
             loading = false
         }
     }
 
-    LaunchedEffect(selected, isSeries) {
-        val item = selected ?: return@LaunchedEffect
+    LaunchedEffect(
+        selected,
+        isSeries,
+        server,
+        username,
+        password
+    ) {
+        val item =
+            selected ?: return@LaunchedEffect
 
         description = item.description
         episodes = emptyList()
@@ -251,56 +413,86 @@ private fun MediaBrowser(
         errorText = ""
 
         try {
-            val info = withContext(Dispatchers.IO) {
+            val info = withContext(
+                Dispatchers.IO
+            ) {
                 JSONObject(
                     api(
                         server,
                         username,
                         password,
-                        if (isSeries) "get_series_info"
-                        else "get_vod_info",
-                        if (isSeries) "&series_id=${item.id}"
-                        else "&vod_id=${item.id}"
+                        if (isSeries) {
+                            "get_series_info"
+                        } else {
+                            "get_vod_info"
+                        },
+                        if (isSeries) {
+                            "&series_id=${item.id}"
+                        } else {
+                            "&vod_id=${item.id}"
+                        }
                     )
                 )
             }
 
-            description = info.optJSONObject("info")
-                ?.optString("plot", item.description)
-                ?: item.description
+            description =
+                info.optJSONObject("info")
+                    ?.optString(
+                        "plot",
+                        item.description
+                    ) ?: item.description
 
             if (isSeries) {
-                val found = mutableListOf<Episode>()
-                val episodeGroups = info.optJSONObject("episodes")
+                val found =
+                    mutableListOf<Episode>()
+
+                val episodeGroups =
+                    info.optJSONObject("episodes")
 
                 if (episodeGroups != null) {
-                    val keys = episodeGroups.keys()
+                    val keys =
+                        episodeGroups.keys()
 
                     while (keys.hasNext()) {
                         val key = keys.next()
-                        val seasonNumber = key.toIntOrNull() ?: 0
-                        val array = episodeGroups.optJSONArray(key)
-                            ?: continue
 
-                        for (i in 0 until array.length()) {
-                            val ep = array.optJSONObject(i)
-                                ?: continue
-                            val id = ep.optString("id")
+                        val seasonNumber =
+                            key.toIntOrNull() ?: 0
 
-                            if (id.isBlank()) continue
+                        val array =
+                            episodeGroups.optJSONArray(
+                                key
+                            ) ?: continue
+
+                        for (
+                            i in 0 until array.length()
+                        ) {
+                            val ep =
+                                array.optJSONObject(i)
+                                    ?: continue
+
+                            val id =
+                                ep.optString("id")
+
+                            if (id.isBlank()) {
+                                continue
+                            }
 
                             found.add(
                                 Episode(
                                     id = id,
                                     title = ep.optString(
-                                        "title", "Episode ${i + 1}"
+                                        "title",
+                                        "Episode ${i + 1}"
                                     ),
                                     season = seasonNumber,
                                     number = ep.optInt(
-                                        "episode_num", i + 1
+                                        "episode_num",
+                                        i + 1
                                     ),
                                     extension = ep.optString(
-                                        "container_extension", "mp4"
+                                        "container_extension",
+                                        "mp4"
                                     )
                                 )
                             )
@@ -309,14 +501,25 @@ private fun MediaBrowser(
                 }
 
                 episodes = found.sortedWith(
-                    compareBy<Episode> { it.season }
-                        .thenBy { it.number }
+                    compareBy<Episode> {
+                        it.season
+                    }.thenBy {
+                        it.number
+                    }
                 )
-                season = episodes.firstOrNull()?.season ?: -1
+
+                season =
+                    episodes.firstOrNull()
+                        ?.season ?: -1
             }
+
         } catch (e: Exception) {
-            errorText = "Unable to load details: " +
-                (e.localizedMessage ?: "Unknown error")
+            errorText =
+                "Unable to load details: " +
+                    (
+                        e.localizedMessage
+                            ?: "Unknown error"
+                    )
         } finally {
             detailLoading = false
         }
@@ -331,34 +534,60 @@ private fun MediaBrowser(
         }
     }
 
-    BackHandler(enabled = selected != null) {
+    BackHandler(
+        enabled = selected != null
+    ) {
         goBack()
     }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF080B16))
+            .background(
+                Color(0xFF080B16)
+            )
             .padding(16.dp)
     ) {
         Row(
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment =
+                Alignment.CenterVertically
         ) {
-            OutlinedButton(onClick = { goBack() }) {
+            OutlinedButton(
+                onClick = {
+                    goBack()
+                }
+            ) {
                 Text("BACK")
             }
 
-            Spacer(Modifier.width(12.dp))
+            Spacer(
+                Modifier.width(12.dp)
+            )
 
             Text(
-                if (isSeries) "SERIES" else "MOVIES",
-                style = MaterialTheme.typography.headlineSmall,
+                when {
+                    initialFavourites && isSeries ->
+                        "★ SERIES FAVOURITES"
+
+                    initialFavourites ->
+                        "★ MOVIE FAVOURITES"
+
+                    isSeries ->
+                        "SERIES"
+
+                    else ->
+                        "MOVIES"
+                },
+                style = MaterialTheme
+                    .typography.headlineSmall,
                 color = NeonBlue,
                 fontWeight = FontWeight.Bold
             )
         }
 
-        Spacer(Modifier.height(12.dp))
+        Spacer(
+            Modifier.height(12.dp)
+        )
 
         if (loading || detailLoading) {
             LinearProgressIndicator(
@@ -369,7 +598,8 @@ private fun MediaBrowser(
         if (errorText.isNotBlank()) {
             Text(
                 errorText,
-                color = MaterialTheme.colorScheme.error
+                color = MaterialTheme
+                    .colorScheme.error
             )
         }
 
@@ -378,30 +608,68 @@ private fun MediaBrowser(
         if (current == null) {
             OutlinedTextField(
                 value = search,
-                onValueChange = { search = it },
-                label = { Text("Search titles") },
+                onValueChange = {
+                    search = it
+                },
+                label = {
+                    Text("Search titles")
+                },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth()
             )
 
-            Spacer(Modifier.height(10.dp))
+            Spacer(
+                Modifier.height(10.dp)
+            )
 
-            val options = listOf(Category("ALL", "All")) +
-                categories
+            val options = listOf(
+                Category(
+                    "ALL",
+                    "All"
+                ),
+                Category(
+                    "FAV",
+                    "★ Favourites"
+                )
+            ) + categories
 
             LazyRowCategories(
                 options = options,
                 selectedId = category,
-                onSelect = { category = it }
+                onSelect = {
+                    category = it
+                }
             )
 
-            Spacer(Modifier.height(12.dp))
+            Spacer(
+                Modifier.height(12.dp)
+            )
 
-            val filtered = remember(media, category, search) {
-                media.filter {
-                    (category == "ALL" ||
-                        it.categoryId == category) &&
-                        it.name.contains(search, ignoreCase = true)
+            val filtered = remember(
+                media,
+                category,
+                search,
+                favourites
+            ) {
+                media.filter { item ->
+                    val categoryMatches =
+                        when (category) {
+                            "ALL" -> true
+
+                            "FAV" ->
+                                item.id.toString() in
+                                    favourites
+
+                            else ->
+                                item.categoryId ==
+                                    category
+                        }
+
+                    categoryMatches &&
+                        item.name.contains(
+                            search,
+                            ignoreCase = true
+                        )
                 }
             }
 
@@ -410,35 +678,82 @@ private fun MediaBrowser(
                 color = Color.LightGray
             )
 
-            Spacer(Modifier.height(10.dp))
+            Spacer(
+                Modifier.height(10.dp)
+            )
 
-            if (!loading) {
+            if (
+                !loading &&
+                filtered.isEmpty() &&
+                errorText.isBlank()
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize(),
+                    contentAlignment =
+                        Alignment.Center
+                ) {
+                    Text(
+                        if (category == "FAV") {
+                            "No favourites yet.\n" +
+                                "Open a title and tap " +
+                                "ADD TO FAVOURITES."
+                        } else {
+                            "No titles found."
+                        },
+                        color = Color.LightGray
+                    )
+                }
+            } else if (!loading) {
                 LazyVerticalGrid(
-                    columns = GridCells.Adaptive(135.dp),
-                    modifier = Modifier.fillMaxSize(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp),
-                    contentPadding = PaddingValues(bottom = 24.dp)
+                    columns =
+                        GridCells.Adaptive(135.dp),
+                    modifier =
+                        Modifier.fillMaxSize(),
+                    horizontalArrangement =
+                        Arrangement.spacedBy(
+                            12.dp
+                        ),
+                    verticalArrangement =
+                        Arrangement.spacedBy(
+                            14.dp
+                        ),
+                    contentPadding =
+                        PaddingValues(
+                            bottom = 24.dp
+                        )
                 ) {
                     items(
                         count = filtered.size,
-                        key = { filtered[it].id }
+                        key = {
+                            filtered[it].id
+                        }
                     ) { index ->
-                        PosterCard(filtered[index]) {
-                            selected = filtered[index]
+                        PosterCard(
+                            filtered[index]
+                        ) {
+                            selected =
+                                filtered[index]
                         }
                     }
                 }
             }
+
         } else {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
+                    .verticalScroll(
+                        rememberScrollState()
+                    ),
+                verticalArrangement =
+                    Arrangement.spacedBy(14.dp)
             ) {
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(16.dp)
+                    horizontalArrangement =
+                        Arrangement.spacedBy(
+                            16.dp
+                        )
                 ) {
                     PosterArtwork(
                         url = current.poster,
@@ -449,22 +764,48 @@ private fun MediaBrowser(
                     )
 
                     Column(
-                        modifier = Modifier.weight(1f),
+                        modifier =
+                            Modifier.weight(1f),
                         verticalArrangement =
-                            Arrangement.spacedBy(10.dp)
+                            Arrangement.spacedBy(
+                                10.dp
+                            )
                     ) {
                         Text(
                             current.name,
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold
+                            style = MaterialTheme
+                                .typography.titleLarge,
+                            fontWeight =
+                                FontWeight.Bold
                         )
+
+                        OutlinedButton(
+                            onClick = {
+                                toggleFavourite(
+                                    current
+                                )
+                            }
+                        ) {
+                            Text(
+                                if (
+                                    current.id.toString() in
+                                        favourites
+                                ) {
+                                    "★ REMOVE FAVOURITE"
+                                } else {
+                                    "☆ ADD TO FAVOURITES"
+                                }
+                            )
+                        }
 
                         if (!isSeries) {
                             Button(
                                 onClick = {
                                     onPlay(
                                         playbackUrl(
-                                            server, username, password,
+                                            server,
+                                            username,
+                                            password,
                                             "movie",
                                             current.id.toString(),
                                             current.extension
@@ -483,41 +824,62 @@ private fun MediaBrowser(
                     }
                 }
 
-                if (description.isNotBlank()) {
+                if (
+                    description.isNotBlank()
+                ) {
                     Text(
                         description,
-                        color = Color(0xFFCED6E8)
+                        color = Color(
+                            0xFFCED6E8
+                        )
                     )
                 }
 
-                if (isSeries && !detailLoading) {
-                    if (episodes.isEmpty()) {
-                        Text("No episodes available.")
+                if (
+                    isSeries &&
+                    !detailLoading
+                ) {
+                    if (
+                        episodes.isEmpty()
+                    ) {
+                        Text(
+                            "No episodes available."
+                        )
                     } else {
                         Text(
                             "SEASONS",
                             color = NeonBlue,
-                            fontWeight = FontWeight.Bold
+                            fontWeight =
+                                FontWeight.Bold
                         )
 
-                        val seasons = episodes.map {
-                            it.season
-                        }.distinct()
+                        val seasons =
+                            episodes.map {
+                                it.season
+                            }.distinct()
 
                         LazyRowCategories(
-                            options = seasons.map {
-                                Category(it.toString(), "Season $it")
-                            },
-                            selectedId = season.toString(),
+                            options =
+                                seasons.map {
+                                    Category(
+                                        it.toString(),
+                                        "Season $it"
+                                    )
+                                },
+                            selectedId =
+                                season.toString(),
                             onSelect = {
-                                season = it.toIntOrNull() ?: season
+                                season =
+                                    it.toIntOrNull()
+                                        ?: season
                             }
                         )
 
                         Text(
                             "EPISODES",
                             color = NeonBlue,
-                            fontWeight = FontWeight.Bold
+                            fontWeight =
+                                FontWeight.Bold
                         )
 
                         episodes.filter {
@@ -527,19 +889,24 @@ private fun MediaBrowser(
                                 onClick = {
                                     onPlay(
                                         playbackUrl(
-                                            server, username, password,
+                                            server,
+                                            username,
+                                            password,
                                             "series",
                                             episode.id,
                                             episode.extension
                                         )
                                     )
                                 },
-                                modifier = Modifier.fillMaxWidth()
+                                modifier = Modifier
+                                    .fillMaxWidth()
                             ) {
                                 Text(
-                                    "${episode.number}. ${episode.title}",
+                                    "${episode.number}. " +
+                                        episode.title,
                                     maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis
+                                    overflow =
+                                        TextOverflow.Ellipsis
                                 )
                             }
                         }
@@ -557,15 +924,22 @@ private fun LazyRowCategories(
     onSelect: (String) -> Unit
 ) {
     androidx.compose.foundation.lazy.LazyRow(
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
+        horizontalArrangement =
+            Arrangement.spacedBy(8.dp)
     ) {
         items(options.size) { index ->
-            val option = options[index]
+            val option =
+                options[index]
 
             FilterChip(
-                selected = option.id == selectedId,
-                onClick = { onSelect(option.id) },
-                label = { Text(option.name) }
+                selected =
+                    option.id == selectedId,
+                onClick = {
+                    onSelect(option.id)
+                },
+                label = {
+                    Text(option.name)
+                }
             )
         }
     }
@@ -576,19 +950,35 @@ private fun PosterCard(
     item: MediaItem,
     onClick: () -> Unit
 ) {
-    var focused by remember { mutableStateOf(false) }
+    var focused by remember {
+        mutableStateOf(false)
+    }
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .onFocusChanged { focused = it.isFocused }
+            .onFocusChanged {
+                focused = it.isFocused
+            }
             .border(
-                if (focused) 2.dp else 1.dp,
-                if (focused) NeonBlue else Color(0xFF28334C),
+                if (focused) {
+                    2.dp
+                } else {
+                    1.dp
+                },
+                if (focused) {
+                    NeonBlue
+                } else {
+                    Color(0xFF28334C)
+                },
                 RoundedCornerShape(14.dp)
             )
-            .clip(RoundedCornerShape(14.dp))
-            .clickable(onClick = onClick)
+            .clip(
+                RoundedCornerShape(14.dp)
+            )
+            .clickable(
+                onClick = onClick
+            )
             .background(DarkSurface)
             .padding(7.dp)
     ) {
@@ -600,15 +990,20 @@ private fun PosterCard(
                 .aspectRatio(2f / 3f)
         )
 
-        Spacer(Modifier.height(8.dp))
+        Spacer(
+            Modifier.height(8.dp)
+        )
 
         Text(
             item.name,
             maxLines = 2,
             minLines = 2,
-            overflow = TextOverflow.Ellipsis,
-            style = MaterialTheme.typography.bodyMedium,
-            fontWeight = FontWeight.SemiBold
+            overflow =
+                TextOverflow.Ellipsis,
+            style = MaterialTheme
+                .typography.bodyMedium,
+            fontWeight =
+                FontWeight.SemiBold
         )
     }
 }
@@ -621,24 +1016,34 @@ private fun PosterArtwork(
 ) {
     Box(
         modifier = modifier
-            .clip(RoundedCornerShape(10.dp))
-            .background(Color(0xFF263250)),
-        contentAlignment = Alignment.Center
+            .clip(
+                RoundedCornerShape(10.dp)
+            )
+            .background(
+                Color(0xFF263250)
+            ),
+        contentAlignment =
+            Alignment.Center
     ) {
         Text(
             "◆",
-            style = MaterialTheme.typography.headlineLarge,
+            style = MaterialTheme
+                .typography.headlineLarge,
             color = NeonPurple
         )
 
-        if (url.startsWith("http://") ||
+        if (
+            url.startsWith("http://") ||
             url.startsWith("https://")
         ) {
             AsyncImage(
                 model = url,
-                contentDescription = "Poster for $title",
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize()
+                contentDescription =
+                    "Poster for $title",
+                contentScale =
+                    ContentScale.Crop,
+                modifier =
+                    Modifier.fillMaxSize()
             )
         }
     }
