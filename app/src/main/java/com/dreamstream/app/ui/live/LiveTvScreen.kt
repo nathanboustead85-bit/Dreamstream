@@ -1,20 +1,40 @@
 package com.dreamstream.app.ui.live
 
-import androidx.compose.foundation.clickable
+import android.content.Context
+import android.util.Base64
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import coil.compose.AsyncImage
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
+import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
+import java.security.MessageDigest
+
+private val Blue = Color(0xFF00C8FF)
+private val Purple = Color(0xFF985BFF)
+private val Background = Color(0xFF080B16)
+private val Panel = Color(0xFF151B30)
 
 data class LiveCategoryItem(
     val id: String,
@@ -25,8 +45,97 @@ data class LiveChannelItem(
     val id: Int,
     val name: String,
     val categoryId: String,
-    val extension: String
+    val extension: String,
+    val logo: String = "",
+    val epgId: String = ""
 )
+
+private data class Programme(
+    val title: String,
+    val description: String,
+    val start: String,
+    val end: String
+)
+
+private fun encode(value: String): String =
+    URLEncoder.encode(value, "UTF-8")
+        .replace("+", "%20")
+
+private fun request(
+    server: String,
+    username: String,
+    password: String,
+    action: String,
+    extra: String = ""
+): String {
+    val endpoint = server.trimEnd('/') +
+        "/player_api.php?username=${encode(username)}" +
+        "&password=${encode(password)}" +
+        "&action=${encode(action)}$extra"
+
+    val connection = URL(endpoint)
+        .openConnection() as HttpURLConnection
+
+    try {
+        connection.connectTimeout = 15000
+        connection.readTimeout = 20000
+
+        if (connection.responseCode != 200) {
+            error("Server returned HTTP ${connection.responseCode}")
+        }
+
+        return connection.inputStream.bufferedReader()
+            .use { it.readText() }
+    } finally {
+        connection.disconnect()
+    }
+}
+
+private fun decodeEpg(value: String): String {
+    if (value.isBlank()) return ""
+
+    return try {
+        val decoded = String(
+            Base64.decode(value, Base64.DEFAULT),
+            Charsets.UTF_8
+        )
+        if (decoded.any { it.isISOControl() && it != '\n' }) {
+            value
+        } else {
+            decoded
+        }
+    } catch (_: Exception) {
+        value
+    }
+}
+
+private fun channelUrl(
+    server: String,
+    username: String,
+    password: String,
+    channel: LiveChannelItem
+): String {
+    val ext = if (
+        channel.extension.lowercase() == "m3u8"
+    ) "m3u8" else "ts"
+
+    return server.trimEnd('/') +
+        "/live/${encode(username)}/${encode(password)}/" +
+        "${channel.id}.$ext"
+}
+
+private fun favouriteStoreKey(
+    server: String,
+    username: String
+): String {
+    val identity = server.trimEnd('/') + "|" + username
+    val digest = MessageDigest.getInstance("SHA-256")
+        .digest(identity.toByteArray(Charsets.UTF_8))
+
+    return digest.joinToString("") {
+        "%02x".format(it.toInt() and 0xff)
+    }
+}
 
 @Composable
 fun LiveTvScreen(
@@ -36,72 +145,117 @@ fun LiveTvScreen(
     onPlay: (String) -> Unit,
     onBack: () -> Unit
 ) {
+    val context = LocalContext.current
+    val prefs = remember(context) {
+        context.getSharedPreferences(
+            "dreamstream_favourites",
+            Context.MODE_PRIVATE
+        )
+    }
+
+    val favouriteKey = remember(server, username) {
+        favouriteStoreKey(server, username)
+    }
+
+    var favourites by remember(favouriteKey) {
+        mutableStateOf(
+            prefs.getStringSet(favouriteKey, emptySet())
+                ?.toSet() ?: emptySet()
+        )
+    }
+
     var categories by remember {
         mutableStateOf<List<LiveCategoryItem>>(emptyList())
     }
-
     var channels by remember {
         mutableStateOf<List<LiveChannelItem>>(emptyList())
     }
 
     var selectedCategory by remember {
-        mutableStateOf<String?>(null)
+        mutableStateOf("ALL")
+    }
+    var search by remember { mutableStateOf("") }
+    var loading by remember { mutableStateOf(true) }
+    var errorText by remember { mutableStateOf("") }
+    var selectedChannel by remember {
+        mutableStateOf<LiveChannelItem?>(null)
     }
 
-    var loading by remember { mutableStateOf(true) }
-    var error by remember { mutableStateOf("") }
+    fun toggleFavourite(channel: LiveChannelItem) {
+        val id = channel.id.toString()
+        val updated = if (id in favourites) {
+            favourites - id
+        } else {
+            favourites + id
+        }
+
+        favourites = updated
+        prefs.edit()
+            .putStringSet(favouriteKey, updated.toSet())
+            .apply()
+    }
 
     LaunchedEffect(server, username, password) {
         loading = true
-        error = ""
+        errorText = ""
 
         try {
             val result = withContext(Dispatchers.IO) {
-                val categoryData = apiRequest(
-                    server, username, password,
-                    "get_live_categories"
+                val categoryJson = JSONArray(
+                    request(
+                        server, username, password,
+                        "get_live_categories"
+                    )
                 )
 
-                val channelData = apiRequest(
-                    server, username, password,
-                    "get_live_streams"
+                val channelJson = JSONArray(
+                    request(
+                        server, username, password,
+                        "get_live_streams"
+                    )
                 )
 
-                val categoryList = mutableListOf<LiveCategoryItem>()
-                val channelList = mutableListOf<LiveChannelItem>()
+                val categoryList =
+                    mutableListOf<LiveCategoryItem>()
+                val channelList =
+                    mutableListOf<LiveChannelItem>()
 
-                for (i in 0 until categoryData.length()) {
-                    val obj = categoryData.getJSONObject(i)
+                for (i in 0 until categoryJson.length()) {
+                    val obj = categoryJson.optJSONObject(i)
+                        ?: continue
 
                     categoryList.add(
                         LiveCategoryItem(
                             id = obj.optString("category_id"),
                             name = obj.optString(
                                 "category_name",
-                                "Unnamed category"
+                                "Other"
                             )
                         )
                     )
                 }
 
-                for (i in 0 until channelData.length()) {
-                    val obj = channelData.getJSONObject(i)
-                    val id = obj.optInt("stream_id", -1)
+                for (i in 0 until channelJson.length()) {
+                    val obj = channelJson.optJSONObject(i)
+                        ?: continue
 
+                    val id = obj.optInt("stream_id", -1)
                     if (id < 0) continue
 
                     channelList.add(
                         LiveChannelItem(
                             id = id,
                             name = obj.optString(
-                                "name",
-                                "Unnamed channel"
+                                "name", "Unnamed channel"
                             ),
-                            categoryId = obj.optString("category_id"),
+                            categoryId = obj.optString(
+                                "category_id"
+                            ),
                             extension = obj.optString(
-                                "container_extension",
-                                "ts"
-                            )
+                                "container_extension", "ts"
+                            ),
+                            logo = obj.optString("stream_icon"),
+                            epgId = obj.optString("epg_channel_id")
                         )
                     )
                 }
@@ -112,151 +266,442 @@ fun LiveTvScreen(
             categories = result.first
             channels = result.second
         } catch (e: Exception) {
-            error = "Unable to load Live TV: " +
+            errorText = "Unable to load Live TV: " +
                 (e.localizedMessage ?: "Unknown error")
         } finally {
             loading = false
         }
     }
 
+    BackHandler(enabled = selectedChannel != null) {
+        selectedChannel = null
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .background(Background)
             .padding(16.dp)
     ) {
-        Button(onClick = {
-            if (selectedCategory != null) {
-                selectedCategory = null
-            } else {
-                onBack()
+        Row(
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            OutlinedButton(
+                onClick = {
+                    if (selectedChannel != null) {
+                        selectedChannel = null
+                    } else {
+                        onBack()
+                    }
+                }
+            ) {
+                Text("BACK")
             }
-        }) {
-            Text("BACK")
+
+            Spacer(Modifier.width(12.dp))
+
+            Text(
+                "LIVE TV",
+                style = MaterialTheme.typography.headlineSmall,
+                color = Blue,
+                fontWeight = FontWeight.Black
+            )
         }
 
-        Text(
-            if (selectedCategory == null) "LIVE TV CATEGORIES"
-            else "CHANNELS",
-            style = MaterialTheme.typography.headlineSmall
-        )
+        Spacer(Modifier.height(12.dp))
 
-        if (loading) {
-            CircularProgressIndicator()
-        } else if (error.isNotEmpty()) {
-            Text(
-                error,
-                color = MaterialTheme.colorScheme.error
+        if (selectedChannel != null) {
+            ChannelDetails(
+                channel = selectedChannel!!,
+                server = server,
+                username = username,
+                password = password,
+                isFavourite =
+                    selectedChannel!!.id.toString() in favourites,
+                onFavourite = {
+                    toggleFavourite(selectedChannel!!)
+                },
+                onPlay = {
+                    onPlay(
+                        channelUrl(
+                            server, username, password,
+                            selectedChannel!!
+                        )
+                    )
+                }
             )
-        } else if (selectedCategory == null) {
-            LazyColumn {
-                item {
-                    Text(
-                        "All channels (${channels.size})",
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { selectedCategory = "ALL" }
-                            .padding(14.dp)
-                    )
-                    HorizontalDivider()
-                }
-
-                items(categories) { category ->
-                    Text(
-                        category.name,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                selectedCategory = category.id
-                            }
-                            .padding(14.dp)
-                    )
-                    HorizontalDivider()
-                }
-            }
         } else {
-            val visibleChannels = if (selectedCategory == "ALL") {
-                channels
-            } else {
-                channels.filter {
-                    it.categoryId == selectedCategory
+            OutlinedTextField(
+                value = search,
+                onValueChange = { search = it },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                label = { Text("Search channels") }
+            )
+
+            Spacer(Modifier.height(10.dp))
+
+            val options = listOf(
+                LiveCategoryItem("ALL", "All"),
+                LiveCategoryItem("FAV", "★ Favourites")
+            ) + categories
+
+            LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(options, key = { it.id }) { category ->
+                    FilterChip(
+                        selected = selectedCategory == category.id,
+                        onClick = {
+                            selectedCategory = category.id
+                        },
+                        label = { Text(category.name) }
+                    )
                 }
             }
 
-            Text("${visibleChannels.size} channels")
+            Spacer(Modifier.height(12.dp))
 
-            LazyColumn {
-                items(visibleChannels) { channel ->
-                    Text(
-                        channel.name,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                val extension =
-                                    channel.extension
-                                        .ifBlank { "ts" }
-                                        .lowercase()
-                                        .let {
-                                            if (it == "m3u8") "m3u8"
-                                            else "ts"
-                                        }
+            val filtered = remember(
+                channels, selectedCategory, search, favourites
+            ) {
+                channels.filter { channel ->
+                    val categoryMatch = when (selectedCategory) {
+                        "ALL" -> true
+                        "FAV" ->
+                            channel.id.toString() in favourites
+                        else ->
+                            channel.categoryId == selectedCategory
+                    }
 
-                                val encodedUser =
-                                    URLEncoder.encode(
-                                        username, "UTF-8"
-                                    ).replace("+", "%20")
-
-                                val encodedPass =
-                                    URLEncoder.encode(
-                                        password, "UTF-8"
-                                    ).replace("+", "%20")
-
-                                val url =
-                                    server.trimEnd('/') +
-                                    "/live/" +
-                                    encodedUser + "/" +
-                                    encodedPass + "/" +
-                                    channel.id + "." +
-                                    extension
-
-                                onPlay(url)
-                            }
-                            .padding(14.dp)
+                    categoryMatch && channel.name.contains(
+                        search, ignoreCase = true
                     )
-                    HorizontalDivider()
+                }
+            }
+
+            Text(
+                "${filtered.size} CHANNELS",
+                color = Purple,
+                fontWeight = FontWeight.Bold
+            )
+
+            Spacer(Modifier.height(8.dp))
+
+            if (loading) {
+                LinearProgressIndicator(
+                    modifier = Modifier.fillMaxWidth()
+                )
+            } else if (errorText.isNotBlank()) {
+                Text(
+                    errorText,
+                    color = MaterialTheme.colorScheme.error
+                )
+            } else {
+                LazyColumn(
+                    verticalArrangement =
+                        Arrangement.spacedBy(8.dp),
+                    contentPadding = PaddingValues(bottom = 24.dp)
+                ) {
+                    items(filtered, key = { it.id }) { channel ->
+                        ChannelRow(
+                            channel = channel,
+                            isFavourite =
+                                channel.id.toString() in favourites,
+                            onFavourite = {
+                                toggleFavourite(channel)
+                            },
+                            onSelect = {
+                                selectedChannel = channel
+                            },
+                            onPlay = {
+                                onPlay(
+                                    channelUrl(
+                                        server, username, password,
+                                        channel
+                                    )
+                                )
+                            }
+                        )
+                    }
                 }
             }
         }
     }
 }
 
-private fun apiRequest(
+@Composable
+private fun ChannelLogo(
+    url: String,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color(0xFF263250)),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            "TV",
+            color = Blue,
+            fontWeight = FontWeight.Black
+        )
+
+        if (
+            url.startsWith("https://") ||
+            url.startsWith("http://")
+        ) {
+            AsyncImage(
+                model = url,
+                contentDescription = "Channel logo",
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Fit
+            )
+        }
+    }
+}
+
+@Composable
+private fun ChannelRow(
+    channel: LiveChannelItem,
+    isFavourite: Boolean,
+    onFavourite: () -> Unit,
+    onSelect: () -> Unit,
+    onPlay: () -> Unit
+) {
+    var focused by remember {
+        mutableStateOf(false)
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .onFocusChanged { focused = it.hasFocus }
+            .border(
+                if (focused) 2.dp else 1.dp,
+                if (focused) Blue else Color(0xFF293451),
+                RoundedCornerShape(14.dp)
+            )
+            .clip(RoundedCornerShape(14.dp))
+            .background(Panel)
+            .clickable(onClick = onSelect)
+            .padding(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        ChannelLogo(
+            url = channel.logo,
+            modifier = Modifier.size(56.dp)
+        )
+
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                channel.name,
+                fontWeight = FontWeight.Bold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+
+            Text(
+                "Live channel",
+                style = MaterialTheme.typography.bodySmall,
+                color = Color.LightGray
+            )
+        }
+
+        TextButton(onClick = onFavourite) {
+            Text(
+                if (isFavourite) "★" else "☆",
+                color = if (isFavourite) Purple else Blue,
+                style = MaterialTheme.typography.titleLarge
+            )
+        }
+
+        Button(
+            onClick = onPlay,
+            contentPadding = PaddingValues(
+                horizontal = 12.dp,
+                vertical = 8.dp
+            )
+        ) {
+            Text("▶")
+        }
+    }
+}
+
+@Composable
+private fun ChannelDetails(
+    channel: LiveChannelItem,
     server: String,
     username: String,
     password: String,
-    action: String
-): JSONArray {
-    val endpoint =
-        server.trimEnd('/') + "/player_api.php" +
-        "?username=" + URLEncoder.encode(username, "UTF-8") +
-        "&password=" + URLEncoder.encode(password, "UTF-8") +
-        "&action=" + URLEncoder.encode(action, "UTF-8")
+    isFavourite: Boolean,
+    onFavourite: () -> Unit,
+    onPlay: () -> Unit
+) {
+    var programmes by remember(channel.id) {
+        mutableStateOf<List<Programme>>(emptyList())
+    }
+    var epgLoading by remember(channel.id) {
+        mutableStateOf(true)
+    }
+    var epgMessage by remember(channel.id) {
+        mutableStateOf("")
+    }
 
-    val connection = URL(endpoint).openConnection()
-        as HttpURLConnection
+    LaunchedEffect(
+        channel.id, server, username, password
+    ) {
+        epgLoading = true
+        epgMessage = ""
+        programmes = emptyList()
 
-    try {
-        connection.connectTimeout = 15000
-        connection.readTimeout = 20000
+        try {
+            programmes = withContext(Dispatchers.IO) {
+                val result = JSONObject(
+                    request(
+                        server, username, password,
+                        "get_short_epg",
+                        "&stream_id=${channel.id}&limit=2"
+                    )
+                )
 
-        if (connection.responseCode != 200) {
-            throw Exception("Server returned HTTP ${connection.responseCode}")
+                val listings = result.optJSONArray("epg_listings")
+                    ?: JSONArray()
+
+                val parsed = mutableListOf<Programme>()
+
+                for (i in 0 until listings.length()) {
+                    val obj = listings.optJSONObject(i)
+                        ?: continue
+
+                    parsed.add(
+                        Programme(
+                            title = decodeEpg(
+                                obj.optString("title")
+                            ),
+                            description = decodeEpg(
+                                obj.optString("description")
+                            ),
+                            start = obj.optString("start"),
+                            end = obj.optString("end")
+                        )
+                    )
+                }
+
+                parsed
+            }
+
+            if (programmes.isEmpty()) {
+                epgMessage = "Programme guide not available."
+            }
+        } catch (_: Exception) {
+            epgMessage =
+                "This provider did not return programme data."
+        } finally {
+            epgLoading = false
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            ChannelLogo(
+                channel.logo,
+                Modifier.size(90.dp)
+            )
+
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    channel.name,
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold
+                )
+
+                Text(
+                    "LIVE CHANNEL",
+                    color = Blue
+                )
+            }
         }
 
-        val response = connection.inputStream
-            .bufferedReader().use { it.readText() }
+        Button(
+            onClick = onPlay,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("▶ WATCH LIVE")
+        }
 
-        return JSONArray(response)
-    } finally {
-        connection.disconnect()
+        OutlinedButton(
+            onClick = onFavourite,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(
+                if (isFavourite) {
+                    "★ REMOVE FROM FAVOURITES"
+                } else {
+                    "☆ ADD TO FAVOURITES"
+                }
+            )
+        }
+
+        Text(
+            "NOW & NEXT",
+            style = MaterialTheme.typography.titleLarge,
+            color = Blue,
+            fontWeight = FontWeight.Bold
+        )
+
+        if (epgLoading) {
+            LinearProgressIndicator(
+                modifier = Modifier.fillMaxWidth()
+            )
+        } else if (epgMessage.isNotBlank()) {
+            Text(epgMessage, color = Color.LightGray)
+        }
+
+        programmes.forEachIndexed { index, programme ->
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(Panel)
+                    .padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text(
+                    if (index == 0) "PROGRAMME 1"
+                    else "PROGRAMME ${index + 1}",
+                    color = Purple,
+                    fontWeight = FontWeight.Bold
+                )
+
+                Text(
+                    programme.title.ifBlank {
+                        "Programme information unavailable"
+                    },
+                    fontWeight = FontWeight.Bold
+                )
+
+                if (programme.start.isNotBlank()) {
+                    Text(
+                        "${programme.start} – ${programme.end}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.LightGray
+                    )
+                }
+
+                if (programme.description.isNotBlank()) {
+                    Text(programme.description)
+                }
+            }
+        }
     }
 }
