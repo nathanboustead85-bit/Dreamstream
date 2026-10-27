@@ -2,11 +2,10 @@ package com.dreamstream.app.ui.player
 
 import android.app.Activity
 import android.content.pm.ActivityInfo
-import android.view.KeyEvent as AndroidKeyEvent
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
@@ -16,10 +15,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.input.key.nativeKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -48,14 +49,18 @@ private val DarkPanel = Color(0xE6101526)
 
 private fun displayTime(ms: Long): String {
     val seconds = max(0L, ms) / 1000L
-    val h = seconds / 3600L
-    val m = (seconds % 3600L) / 60L
-    val s = seconds % 60L
+    val hours = seconds / 3600L
+    val minutes = (seconds % 3600L) / 60L
+    val remaining = seconds % 60L
 
-    return if (h > 0L) {
-        "%d:%02d:%02d".format(h, m, s)
+    return if (hours > 0L) {
+        "%d:%02d:%02d".format(
+            hours, minutes, remaining
+        )
     } else {
-        "%02d:%02d".format(m, s)
+        "%02d:%02d".format(
+            minutes, remaining
+        )
     }
 }
 
@@ -71,9 +76,7 @@ fun VideoPlayer(
     val activity = context as? Activity
 
     val isLive = liveChannels.isNotEmpty()
-
     val selectedChannel = liveChannels.getOrNull(liveIndex)
-
     val url = selectedChannel?.url ?: streamUrl
 
     val player = remember(context) {
@@ -138,7 +141,9 @@ fun VideoPlayer(
         if (liveChannels.isEmpty()) return
 
         val size = liveChannels.size
-        val next = (liveIndex + direction + size) % size
+        val next = (
+            liveIndex + direction + size
+        ) % size
 
         controlsVisible = true
         onLiveIndexChange(next)
@@ -165,6 +170,7 @@ fun VideoPlayer(
 
     DisposableEffect(player) {
         val listener = object : Player.Listener {
+
             override fun onIsPlayingChanged(
                 isPlaying: Boolean
             ) {
@@ -217,7 +223,10 @@ fun VideoPlayer(
     }
 
     LaunchedEffect(error, retryCount, url) {
-        if (error.isNotBlank() && retryCount < 2) {
+        if (
+            error.isNotBlank() &&
+            retryCount < 2
+        ) {
             delay(2500L)
             retryCount++
             retryToken++
@@ -226,22 +235,36 @@ fun VideoPlayer(
 
     LaunchedEffect(player) {
         while (true) {
-            position = max(0L, player.currentPosition)
+            position = max(
+                0L,
+                player.currentPosition
+            )
 
             val d = player.duration
 
             duration = if (
                 d == C.TIME_UNSET || d < 0L
-            ) 0L else d
+            ) {
+                0L
+            } else {
+                d
+            }
 
-            seekable = player.isCurrentMediaItemSeekable
+            seekable =
+                player.isCurrentMediaItemSeekable
 
             delay(500L)
         }
     }
 
-    LaunchedEffect(controlsVisible, playing, url) {
-        if (controlsVisible && playing &&
+    LaunchedEffect(
+        controlsVisible,
+        playing,
+        url
+    ) {
+        if (
+            controlsVisible &&
+            playing &&
             error.isBlank()
         ) {
             delay(5000L)
@@ -258,15 +281,16 @@ fun VideoPlayer(
             .fillMaxSize()
             .background(Color.Black)
             .onPreviewKeyEvent { event ->
-                val key = event.nativeKeyEvent
 
-                if (key.action != AndroidKeyEvent.ACTION_DOWN) {
+                if (
+                    event.type != KeyEventType.KeyDown
+                ) {
                     return@onPreviewKeyEvent false
                 }
 
-                when (key.keyCode) {
-                    AndroidKeyEvent.KEYCODE_DPAD_UP,
-                    AndroidKeyEvent.KEYCODE_CHANNEL_UP -> {
+                when (event.key) {
+
+                    Key.DirectionUp -> {
                         if (isLive) {
                             switchChannel(-1)
                             true
@@ -276,8 +300,7 @@ fun VideoPlayer(
                         }
                     }
 
-                    AndroidKeyEvent.KEYCODE_DPAD_DOWN,
-                    AndroidKeyEvent.KEYCODE_CHANNEL_DOWN -> {
+                    Key.DirectionDown -> {
                         if (isLive) {
                             switchChannel(1)
                             true
@@ -287,16 +310,19 @@ fun VideoPlayer(
                         }
                     }
 
-                    AndroidKeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> {
-                        if (player.isPlaying) player.pause()
-                        else player.play()
+                    Key.MediaPlayPause -> {
+                        if (player.isPlaying) {
+                            player.pause()
+                        } else {
+                            player.play()
+                        }
 
                         controlsVisible = true
                         true
                     }
 
-                    AndroidKeyEvent.KEYCODE_DPAD_CENTER,
-                    AndroidKeyEvent.KEYCODE_ENTER -> {
+                    Key.DirectionCenter,
+                    Key.Enter -> {
                         if (!controlsVisible) {
                             controlsVisible = true
                             true
@@ -320,7 +346,8 @@ fun VideoPlayer(
             },
             update = { view ->
                 view.player = player
-                view.resizeMode = aspectModes[aspectIndex]
+                view.resizeMode =
+                    aspectModes[aspectIndex]
             },
             modifier = Modifier.fillMaxSize()
         )
@@ -330,12 +357,16 @@ fun VideoPlayer(
                 .fillMaxSize()
                 .pointerInput(Unit) {
                     detectTapGestures {
-                        controlsVisible = !controlsVisible
+                        controlsVisible =
+                            !controlsVisible
                     }
                 }
         )
 
-        if (buffering && error.isBlank()) {
+        if (
+            buffering &&
+            error.isBlank()
+        ) {
             CircularProgressIndicator(
                 color = NeonBlue,
                 modifier = Modifier.align(
@@ -344,7 +375,10 @@ fun VideoPlayer(
             )
         }
 
-        if (controlsVisible || error.isNotBlank()) {
+        if (
+            controlsVisible ||
+            error.isNotBlank()
+        ) {
             Column(
                 modifier = Modifier.fillMaxSize(),
                 verticalArrangement =
@@ -363,29 +397,38 @@ fun VideoPlayer(
                     horizontalArrangement =
                         Arrangement.spacedBy(10.dp)
                 ) {
-                    OutlinedButton(onClick = onBack) {
+                    OutlinedButton(
+                        onClick = onBack
+                    ) {
                         Text("← BACK")
                     }
 
-                    if (selectedChannel != null) {
+                    if (
+                        selectedChannel != null
+                    ) {
                         if (
-                            selectedChannel.logo.startsWith("http")
+                            selectedChannel.logo
+                                .startsWith("http")
                         ) {
                             AsyncImage(
-                                model = selectedChannel.logo,
+                                model =
+                                    selectedChannel.logo,
                                 contentDescription =
                                     "Channel logo",
-                                modifier = Modifier.size(38.dp)
+                                modifier =
+                                    Modifier.size(38.dp)
                             )
                         }
 
                         Column(
-                            modifier = Modifier.weight(1f)
+                            modifier =
+                                Modifier.weight(1f)
                         ) {
                             Text(
                                 selectedChannel.name,
                                 color = Color.White,
-                                fontWeight = FontWeight.Bold,
+                                fontWeight =
+                                    FontWeight.Bold,
                                 maxLines = 1,
                                 overflow =
                                     TextOverflow.Ellipsis
@@ -395,7 +438,8 @@ fun VideoPlayer(
                                 selectedChannel.category,
                                 color = NeonBlue,
                                 style =
-                                    MaterialTheme.typography
+                                    MaterialTheme
+                                        .typography
                                         .bodySmall
                             )
                         }
@@ -403,8 +447,10 @@ fun VideoPlayer(
                         Text(
                             "DREAMSTREAM ULTRA",
                             color = NeonBlue,
-                            fontWeight = FontWeight.Black,
-                            modifier = Modifier.weight(1f)
+                            fontWeight =
+                                FontWeight.Black,
+                            modifier =
+                                Modifier.weight(1f)
                         )
                     }
 
@@ -412,7 +458,8 @@ fun VideoPlayer(
                         Text(
                             "● LIVE",
                             color = Color.Red,
-                            fontWeight = FontWeight.Bold
+                            fontWeight =
+                                FontWeight.Bold
                         )
                     }
 
@@ -441,18 +488,25 @@ fun VideoPlayer(
                     verticalArrangement =
                         Arrangement.spacedBy(4.dp)
                 ) {
-                    if (error.isNotBlank()) {
+                    if (
+                        error.isNotBlank()
+                    ) {
                         Text(
-                            if (retryCount < 2) {
+                            if (
+                                retryCount < 2
+                            ) {
                                 "Reconnecting... " +
                                     "(${retryCount + 1}/2)"
                             } else {
                                 "Playback error: $error"
                             },
-                            color = Color(0xFFFF7777)
+                            color =
+                                Color(0xFFFF7777)
                         )
 
-                        if (retryCount >= 2) {
+                        if (
+                            retryCount >= 2
+                        ) {
                             TextButton(
                                 onClick = {
                                     retryCount = 0
@@ -464,27 +518,36 @@ fun VideoPlayer(
                         }
                     }
 
-                    if (!isLive &&
+                    if (
+                        !isLive &&
                         seekable &&
                         duration > 0L
                     ) {
                         Slider(
                             value = position
-                                .coerceIn(0L, duration)
+                                .coerceIn(
+                                    0L,
+                                    duration
+                                )
                                 .toFloat(),
                             onValueChange = {
-                                position = it.toLong()
+                                position =
+                                    it.toLong()
                             },
                             onValueChangeFinished = {
-                                player.seekTo(position)
+                                player.seekTo(
+                                    position
+                                )
                             },
                             valueRange =
                                 0f..duration.toFloat(),
-                            modifier = Modifier.fillMaxWidth()
+                            modifier =
+                                Modifier.fillMaxWidth()
                         )
 
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier =
+                                Modifier.fillMaxWidth(),
                             horizontalArrangement =
                                 Arrangement.SpaceBetween
                         ) {
@@ -492,15 +555,18 @@ fun VideoPlayer(
                                 displayTime(position),
                                 color = Color.White
                             )
+
                             Text(
                                 displayTime(duration),
-                                color = Color.LightGray
+                                color =
+                                    Color.LightGray
                             )
                         }
                     }
 
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier =
+                            Modifier.fillMaxWidth(),
                         horizontalArrangement =
                             Arrangement.Center,
                         verticalAlignment =
@@ -530,31 +596,47 @@ fun VideoPlayer(
                             }
                         }
 
-                        Spacer(Modifier.width(12.dp))
+                        Spacer(
+                            Modifier.width(12.dp)
+                        )
 
                         Button(
                             onClick = {
-                                if (player.isPlaying) {
+                                if (
+                                    player.isPlaying
+                                ) {
                                     player.pause()
                                 } else {
                                     player.play()
                                 }
                             },
                             colors =
-                                ButtonDefaults.buttonColors(
-                                    containerColor = NeonBlue,
-                                    contentColor = Color.Black
-                                ),
-                            shape = RoundedCornerShape(12.dp)
+                                ButtonDefaults
+                                    .buttonColors(
+                                        containerColor =
+                                            NeonBlue,
+                                        contentColor =
+                                            Color.Black
+                                    ),
+                            shape =
+                                RoundedCornerShape(
+                                    12.dp
+                                )
                         ) {
                             Text(
-                                if (playing) "Ⅱ PAUSE"
-                                else "▶ PLAY",
-                                fontWeight = FontWeight.Bold
+                                if (playing) {
+                                    "Ⅱ PAUSE"
+                                } else {
+                                    "▶ PLAY"
+                                },
+                                fontWeight =
+                                    FontWeight.Bold
                             )
                         }
 
-                        Spacer(Modifier.width(12.dp))
+                        Spacer(
+                            Modifier.width(12.dp)
+                        )
 
                         if (isLive) {
                             TextButton(
@@ -571,7 +653,9 @@ fun VideoPlayer(
                                         (
                                             player.currentPosition +
                                                 30000L
-                                        ).coerceAtMost(duration)
+                                        ).coerceAtMost(
+                                            duration
+                                        )
                                     )
                                 }
                             ) {
