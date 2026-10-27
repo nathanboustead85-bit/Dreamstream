@@ -1,4 +1,3 @@
-
 package com.dreamstream.app.ui.player
 
 import android.app.Activity
