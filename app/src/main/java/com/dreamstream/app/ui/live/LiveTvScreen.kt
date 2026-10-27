@@ -1,4 +1,4 @@
-package com.dreamstream.ap.ui.live
+package com.dreamstream.app.ui.live
 
 import android.content.Context
 import androidx.activity.compose.BackHandler
