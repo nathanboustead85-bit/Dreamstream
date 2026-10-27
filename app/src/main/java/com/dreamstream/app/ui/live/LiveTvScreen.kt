@@ -1,13 +1,12 @@
-package com.dreamstream.app.ui.live
+package com.dreamstream.ap .ui.live
 
 import android.content.Context
-import android.util.Base64
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -22,14 +21,16 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import java.net.URLEncoder
+import java.security.MessageDigest
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
-import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
-import java.net.URLEncoder
-import java.security.MessageDigest
 
 private val Blue = Color(0xFF00C8FF)
 private val Purple = Color(0xFF985BFF)
@@ -50,28 +51,20 @@ data class LiveChannelItem(
     val epgId: String = ""
 )
 
-private data class Programme(
-    val title: String,
-    val description: String,
-    val start: String,
-    val end: String
-)
-
 private fun encode(value: String): String =
     URLEncoder.encode(value, "UTF-8")
         .replace("+", "%20")
 
-private fun request(
+private fun apiRequest(
     server: String,
     username: String,
     password: String,
-    action: String,
-    extra: String = ""
-): String {
+    action: String
+): JSONArray {
     val endpoint = server.trimEnd('/') +
         "/player_api.php?username=${encode(username)}" +
         "&password=${encode(password)}" +
-        "&action=${encode(action)}$extra"
+        "&action=${encode(action)}"
 
     val connection = URL(endpoint)
         .openConnection() as HttpURLConnection
@@ -84,28 +77,12 @@ private fun request(
             error("Server returned HTTP ${connection.responseCode}")
         }
 
-        return connection.inputStream.bufferedReader()
-            .use { it.readText() }
+        return JSONArray(
+            connection.inputStream.bufferedReader()
+                .use { it.readText() }
+        )
     } finally {
         connection.disconnect()
-    }
-}
-
-private fun decodeEpg(value: String): String {
-    if (value.isBlank()) return ""
-
-    return try {
-        val decoded = String(
-            Base64.decode(value, Base64.DEFAULT),
-            Charsets.UTF_8
-        )
-        if (decoded.any { it.isISOControl() && it != '\n' }) {
-            value
-        } else {
-            decoded
-        }
-    } catch (_: Exception) {
-        value
     }
 }
 
@@ -115,22 +92,25 @@ private fun channelUrl(
     password: String,
     channel: LiveChannelItem
 ): String {
-    val ext = if (
-        channel.extension.lowercase() == "m3u8"
-    ) "m3u8" else "ts"
+    val extension =
+        if (channel.extension.lowercase() == "m3u8") {
+            "m3u8"
+        } else {
+            "ts"
+        }
 
     return server.trimEnd('/') +
         "/live/${encode(username)}/${encode(password)}/" +
-        "${channel.id}.$ext"
+        "${channel.id}.$extension"
 }
 
-private fun favouriteStoreKey(
+private fun favouriteKey(
     server: String,
     username: String
 ): String {
-    val identity = server.trimEnd('/') + "|" + username
+    val value = "$server|$username"
     val digest = MessageDigest.getInstance("SHA-256")
-        .digest(identity.toByteArray(Charsets.UTF_8))
+        .digest(value.toByteArray(Charsets.UTF_8))
 
     return digest.joinToString("") {
         "%02x".format(it.toInt() and 0xff)
@@ -153,13 +133,13 @@ fun LiveTvScreen(
         )
     }
 
-    val favouriteKey = remember(server, username) {
-        favouriteStoreKey(server, username)
+    val key = remember(server, username) {
+        favouriteKey(server, username)
     }
 
-    var favourites by remember(favouriteKey) {
+    var favourites by remember(key) {
         mutableStateOf(
-            prefs.getStringSet(favouriteKey, emptySet())
+            prefs.getStringSet(key, emptySet())
                 ?.toSet() ?: emptySet()
         )
     }
@@ -170,19 +150,19 @@ fun LiveTvScreen(
     var channels by remember {
         mutableStateOf<List<LiveChannelItem>>(emptyList())
     }
-
     var selectedCategory by remember {
         mutableStateOf("ALL")
+    }
+    var selectedChannel by remember {
+        mutableStateOf<LiveChannelItem?>(null)
     }
     var search by remember { mutableStateOf("") }
     var loading by remember { mutableStateOf(true) }
     var errorText by remember { mutableStateOf("") }
-    var selectedChannel by remember {
-        mutableStateOf<LiveChannelItem?>(null)
-    }
 
     fun toggleFavourite(channel: LiveChannelItem) {
         val id = channel.id.toString()
+
         val updated = if (id in favourites) {
             favourites - id
         } else {
@@ -191,7 +171,7 @@ fun LiveTvScreen(
 
         favourites = updated
         prefs.edit()
-            .putStringSet(favouriteKey, updated.toSet())
+            .putStringSet(key, updated.toSet())
             .apply()
     }
 
@@ -201,18 +181,14 @@ fun LiveTvScreen(
 
         try {
             val result = withContext(Dispatchers.IO) {
-                val categoryJson = JSONArray(
-                    request(
-                        server, username, password,
-                        "get_live_categories"
-                    )
+                val categoryData = apiRequest(
+                    server, username, password,
+                    "get_live_categories"
                 )
 
-                val channelJson = JSONArray(
-                    request(
-                        server, username, password,
-                        "get_live_streams"
-                    )
+                val channelData = apiRequest(
+                    server, username, password,
+                    "get_live_streams"
                 )
 
                 val categoryList =
@@ -220,23 +196,22 @@ fun LiveTvScreen(
                 val channelList =
                     mutableListOf<LiveChannelItem>()
 
-                for (i in 0 until categoryJson.length()) {
-                    val obj = categoryJson.optJSONObject(i)
+                for (i in 0 until categoryData.length()) {
+                    val obj = categoryData.optJSONObject(i)
                         ?: continue
 
                     categoryList.add(
                         LiveCategoryItem(
-                            id = obj.optString("category_id"),
-                            name = obj.optString(
-                                "category_name",
-                                "Other"
+                            obj.optString("category_id"),
+                            obj.optString(
+                                "category_name", "Other"
                             )
                         )
                     )
                 }
 
-                for (i in 0 until channelJson.length()) {
-                    val obj = channelJson.optJSONObject(i)
+                for (i in 0 until channelData.length()) {
+                    val obj = channelData.optJSONObject(i)
                         ?: continue
 
                     val id = obj.optInt("stream_id", -1)
@@ -255,7 +230,9 @@ fun LiveTvScreen(
                                 "container_extension", "ts"
                             ),
                             logo = obj.optString("stream_icon"),
-                            epgId = obj.optString("epg_channel_id")
+                            epgId = obj.optString(
+                                "epg_channel_id"
+                            )
                         )
                     )
                 }
@@ -303,29 +280,31 @@ fun LiveTvScreen(
             Text(
                 "LIVE TV",
                 style = MaterialTheme.typography.headlineSmall,
-                color = Blue,
-                fontWeight = FontWeight.Black
+                fontWeight = FontWeight.Black,
+                color = Blue
             )
         }
 
         Spacer(Modifier.height(12.dp))
 
-        if (selectedChannel != null) {
+        val selected = selectedChannel
+
+        if (selected != null) {
             ChannelDetails(
-                channel = selectedChannel!!,
+                channel = selected,
                 server = server,
                 username = username,
                 password = password,
                 isFavourite =
-                    selectedChannel!!.id.toString() in favourites,
+                    selected.id.toString() in favourites,
                 onFavourite = {
-                    toggleFavourite(selectedChannel!!)
+                    toggleFavourite(selected)
                 },
                 onPlay = {
                     onPlay(
                         channelUrl(
                             server, username, password,
-                            selectedChannel!!
+                            selected
                         )
                     )
                 }
@@ -334,9 +313,9 @@ fun LiveTvScreen(
             OutlinedTextField(
                 value = search,
                 onValueChange = { search = it },
-                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Search channels") },
                 singleLine = true,
-                label = { Text("Search channels") }
+                modifier = Modifier.fillMaxWidth()
             )
 
             Spacer(Modifier.height(10.dp))
@@ -347,11 +326,13 @@ fun LiveTvScreen(
             ) + categories
 
             LazyRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement =
+                    Arrangement.spacedBy(8.dp)
             ) {
                 items(options, key = { it.id }) { category ->
                     FilterChip(
-                        selected = selectedCategory == category.id,
+                        selected =
+                            selectedCategory == category.id,
                         onClick = {
                             selectedCategory = category.id
                         },
@@ -363,20 +344,24 @@ fun LiveTvScreen(
             Spacer(Modifier.height(12.dp))
 
             val filtered = remember(
-                channels, selectedCategory, search, favourites
+                channels, selectedCategory,
+                search, favourites
             ) {
                 channels.filter { channel ->
-                    val categoryMatch = when (selectedCategory) {
-                        "ALL" -> true
-                        "FAV" ->
-                            channel.id.toString() in favourites
-                        else ->
-                            channel.categoryId == selectedCategory
-                    }
+                    val categoryMatch =
+                        when (selectedCategory) {
+                            "ALL" -> true
+                            "FAV" ->
+                                channel.id.toString() in favourites
+                            else ->
+                                channel.categoryId ==
+                                    selectedCategory
+                        }
 
-                    categoryMatch && channel.name.contains(
-                        search, ignoreCase = true
-                    )
+                    categoryMatch &&
+                        channel.name.contains(
+                            search, ignoreCase = true
+                        )
                 }
             }
 
@@ -401,9 +386,13 @@ fun LiveTvScreen(
                 LazyColumn(
                     verticalArrangement =
                         Arrangement.spacedBy(8.dp),
-                    contentPadding = PaddingValues(bottom = 24.dp)
+                    contentPadding =
+                        PaddingValues(bottom = 24.dp)
                 ) {
-                    items(filtered, key = { it.id }) { channel ->
+                    items(
+                        filtered,
+                        key = { it.id }
+                    ) { channel ->
                         ChannelRow(
                             channel = channel,
                             isFavourite =
@@ -417,8 +406,8 @@ fun LiveTvScreen(
                             onPlay = {
                                 onPlay(
                                     channelUrl(
-                                        server, username, password,
-                                        channel
+                                        server, username,
+                                        password, channel
                                     )
                                 )
                             }
@@ -454,8 +443,8 @@ private fun ChannelLogo(
             AsyncImage(
                 model = url,
                 contentDescription = "Channel logo",
-                modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.Fit
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxSize()
             )
         }
     }
@@ -476,10 +465,13 @@ private fun ChannelRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .onFocusChanged { focused = it.hasFocus }
+            .onFocusChanged {
+                focused = it.hasFocus
+            }
             .border(
                 if (focused) 2.dp else 1.dp,
-                if (focused) Blue else Color(0xFF293451),
+                if (focused) Blue
+                else Color(0xFF293451),
                 RoundedCornerShape(14.dp)
             )
             .clip(RoundedCornerShape(14.dp))
@@ -487,11 +479,12 @@ private fun ChannelRow(
             .clickable(onClick = onSelect)
             .padding(10.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
+        horizontalArrangement =
+            Arrangement.spacedBy(10.dp)
     ) {
         ChannelLogo(
-            url = channel.logo,
-            modifier = Modifier.size(56.dp)
+            channel.logo,
+            Modifier.size(56.dp)
         )
 
         Column(modifier = Modifier.weight(1f)) {
@@ -539,83 +532,61 @@ private fun ChannelDetails(
     onFavourite: () -> Unit,
     onPlay: () -> Unit
 ) {
-    var programmes by remember(channel.id) {
-        mutableStateOf<List<Programme>>(emptyList())
+    var epg by remember(channel.id) {
+        mutableStateOf<EpgResult?>(null)
     }
-    var epgLoading by remember(channel.id) {
+    var loading by remember(channel.id) {
         mutableStateOf(true)
     }
-    var epgMessage by remember(channel.id) {
-        mutableStateOf("")
+    var refreshCount by remember(channel.id) {
+        mutableIntStateOf(0)
     }
 
     LaunchedEffect(
-        channel.id, server, username, password
+        channel.id, server, username,
+        password, refreshCount
     ) {
-        epgLoading = true
-        epgMessage = ""
-        programmes = emptyList()
+        loading = true
 
         try {
-            programmes = withContext(Dispatchers.IO) {
-                val result = JSONObject(
-                    request(
-                        server, username, password,
-                        "get_short_epg",
-                        "&stream_id=${channel.id}&limit=2"
-                    )
-                )
-
-                val listings = result.optJSONArray("epg_listings")
-                    ?: JSONArray()
-
-                val parsed = mutableListOf<Programme>()
-
-                for (i in 0 until listings.length()) {
-                    val obj = listings.optJSONObject(i)
-                        ?: continue
-
-                    parsed.add(
-                        Programme(
-                            title = decodeEpg(
-                                obj.optString("title")
-                            ),
-                            description = decodeEpg(
-                                obj.optString("description")
-                            ),
-                            start = obj.optString("start"),
-                            end = obj.optString("end")
-                        )
-                    )
-                }
-
-                parsed
-            }
-
-            if (programmes.isEmpty()) {
-                epgMessage = "Programme guide not available."
-            }
+            epg = EpgRepository.load(
+                server = server,
+                username = username,
+                password = password,
+                streamId = channel.id,
+                epgChannelId = channel.epgId,
+                forceRefresh = refreshCount > 0
+            )
         } catch (_: Exception) {
-            epgMessage =
-                "This provider did not return programme data."
+            epg = EpgResult(
+                programmes = emptyList(),
+                source = "",
+                message = "Unable to retrieve programme guide."
+            )
         } finally {
-            epgLoading = false
+            loading = false
         }
+    }
+
+    val timeFormatter = remember {
+        SimpleDateFormat("HH:mm", Locale.getDefault())
     }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        verticalArrangement =
+            Arrangement.spacedBy(14.dp)
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(16.dp)
+            horizontalArrangement =
+                Arrangement.spacedBy(14.dp)
         ) {
             ChannelLogo(
                 channel.logo,
-                Modifier.size(90.dp)
+                Modifier.size(88.dp)
             )
 
             Column(modifier = Modifier.weight(1f)) {
@@ -652,54 +623,100 @@ private fun ChannelDetails(
             )
         }
 
-        Text(
-            "NOW & NEXT",
-            style = MaterialTheme.typography.titleLarge,
-            color = Blue,
-            fontWeight = FontWeight.Bold
-        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                "NOW & NEXT",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                color = Blue,
+                modifier = Modifier.weight(1f)
+            )
 
-        if (epgLoading) {
+            TextButton(
+                onClick = { refreshCount++ },
+                enabled = !loading
+            ) {
+                Text("↻ REFRESH")
+            }
+        }
+
+        if (loading) {
             LinearProgressIndicator(
                 modifier = Modifier.fillMaxWidth()
             )
-        } else if (epgMessage.isNotBlank()) {
-            Text(epgMessage, color = Color.LightGray)
-        }
+            Text(
+                "Checking programme guide...",
+                color = Color.LightGray
+            )
+        } else {
+            val result = epg
 
-        programmes.forEachIndexed { index, programme ->
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(Panel)
-                    .padding(14.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                Text(
-                    if (index == 0) "PROGRAMME 1"
-                    else "PROGRAMME ${index + 1}",
-                    color = Purple,
-                    fontWeight = FontWeight.Bold
-                )
-
-                Text(
-                    programme.title.ifBlank {
-                        "Programme information unavailable"
-                    },
-                    fontWeight = FontWeight.Bold
-                )
-
-                if (programme.start.isNotBlank()) {
+            if (result != null) {
+                if (result.source.isNotBlank()) {
                     Text(
-                        "${programme.start} – ${programme.end}",
+                        "Guide source: ${result.source}",
                         style = MaterialTheme.typography.bodySmall,
+                        color = Purple
+                    )
+                }
+
+                if (result.programmes.isEmpty()) {
+                    Text(
+                        result.message.ifBlank {
+                            "No programme information available."
+                        },
                         color = Color.LightGray
                     )
                 }
 
-                if (programme.description.isNotBlank()) {
-                    Text(programme.description)
+                val now = System.currentTimeMillis()
+
+                result.programmes.forEach { programme ->
+                    val isNow =
+                        programme.startMillis <= now &&
+                        programme.endMillis > now
+
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(Panel)
+                            .padding(14.dp),
+                        verticalArrangement =
+                            Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(
+                            if (isNow) "● NOW PLAYING"
+                            else "UP NEXT",
+                            color = if (isNow) Blue else Purple,
+                            fontWeight = FontWeight.Bold
+                        )
+
+                        Text(
+                            programme.title.ifBlank {
+                                "Untitled programme"
+                            },
+                            style =
+                                MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+
+                        Text(
+                            timeFormatter.format(
+                                Date(programme.startMillis)
+                            ) + " – " +
+                                timeFormatter.format(
+                                    Date(programme.endMillis)
+                                ),
+                            color = Color.LightGray
+                        )
+
+                        if (programme.description.isNotBlank()) {
+                            Text(programme.description)
+                        }
+                    }
                 }
             }
         }
