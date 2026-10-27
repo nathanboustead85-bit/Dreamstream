@@ -21,6 +21,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import com.dreamstream.app.ui.player.LivePlaybackChannel
 import java.net.URLEncoder
 import java.security.MessageDigest
 import java.text.SimpleDateFormat
@@ -74,7 +75,9 @@ private fun apiRequest(
         connection.readTimeout = 20000
 
         if (connection.responseCode != 200) {
-            error("Server returned HTTP ${connection.responseCode}")
+            error(
+                "Server returned HTTP ${connection.responseCode}"
+            )
         }
 
         return JSONArray(
@@ -109,7 +112,9 @@ private fun favouriteKey(
     username: String
 ): String {
     val value = "$server|$username"
-    val digest = MessageDigest.getInstance("SHA-256")
+
+    val digest = MessageDigest
+        .getInstance("SHA-256")
         .digest(value.toByteArray(Charsets.UTF_8))
 
     return digest.joinToString("") {
@@ -122,10 +127,11 @@ fun LiveTvScreen(
     server: String,
     username: String,
     password: String,
-    onPlay: (String) -> Unit,
+    onPlay: (List<LivePlaybackChannel>, Int) -> Unit,
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
+
     val prefs = remember(context) {
         context.getSharedPreferences(
             "dreamstream_favourites",
@@ -145,20 +151,36 @@ fun LiveTvScreen(
     }
 
     var categories by remember {
-        mutableStateOf<List<LiveCategoryItem>>(emptyList())
+        mutableStateOf<List<LiveCategoryItem>>(
+            emptyList()
+        )
     }
+
     var channels by remember {
-        mutableStateOf<List<LiveChannelItem>>(emptyList())
+        mutableStateOf<List<LiveChannelItem>>(
+            emptyList()
+        )
     }
+
     var selectedCategory by remember {
         mutableStateOf("ALL")
     }
+
     var selectedChannel by remember {
         mutableStateOf<LiveChannelItem?>(null)
     }
-    var search by remember { mutableStateOf("") }
-    var loading by remember { mutableStateOf(true) }
-    var errorText by remember { mutableStateOf("") }
+
+    var search by remember {
+        mutableStateOf("")
+    }
+
+    var loading by remember {
+        mutableStateOf(true)
+    }
+
+    var errorText by remember {
+        mutableStateOf("")
+    }
 
     fun toggleFavourite(channel: LiveChannelItem) {
         val id = channel.id.toString()
@@ -170,9 +192,44 @@ fun LiveTvScreen(
         }
 
         favourites = updated
+
         prefs.edit()
             .putStringSet(key, updated.toSet())
             .apply()
+    }
+
+    fun playChannel(channel: LiveChannelItem) {
+        // Pass all channels to the player so that
+        // CH+ and CH- can switch without returning
+        // to the Live TV screen.
+
+        val playlist = channels.map { item ->
+            val categoryName = categories
+                .firstOrNull {
+                    it.id == item.categoryId
+                }
+                ?.name ?: "Live TV"
+
+            LivePlaybackChannel(
+                name = item.name,
+                logo = item.logo,
+                url = channelUrl(
+                    server,
+                    username,
+                    password,
+                    item
+                ),
+                category = categoryName
+            )
+        }
+
+        val index = channels.indexOfFirst {
+            it.id == channel.id
+        }
+
+        if (index >= 0) {
+            onPlay(playlist, index)
+        }
     }
 
     LaunchedEffect(server, username, password) {
@@ -180,56 +237,80 @@ fun LiveTvScreen(
         errorText = ""
 
         try {
-            val result = withContext(Dispatchers.IO) {
+            val result = withContext(
+                Dispatchers.IO
+            ) {
                 val categoryData = apiRequest(
-                    server, username, password,
+                    server,
+                    username,
+                    password,
                     "get_live_categories"
                 )
 
                 val channelData = apiRequest(
-                    server, username, password,
+                    server,
+                    username,
+                    password,
                     "get_live_streams"
                 )
 
                 val categoryList =
                     mutableListOf<LiveCategoryItem>()
+
                 val channelList =
                     mutableListOf<LiveChannelItem>()
 
-                for (i in 0 until categoryData.length()) {
-                    val obj = categoryData.optJSONObject(i)
-                        ?: continue
+                for (
+                    i in 0 until categoryData.length()
+                ) {
+                    val obj =
+                        categoryData.optJSONObject(i)
+                            ?: continue
 
                     categoryList.add(
                         LiveCategoryItem(
-                            obj.optString("category_id"),
-                            obj.optString(
-                                "category_name", "Other"
+                            id = obj.optString(
+                                "category_id"
+                            ),
+                            name = obj.optString(
+                                "category_name",
+                                "Other"
                             )
                         )
                     )
                 }
 
-                for (i in 0 until channelData.length()) {
-                    val obj = channelData.optJSONObject(i)
-                        ?: continue
+                for (
+                    i in 0 until channelData.length()
+                ) {
+                    val obj =
+                        channelData.optJSONObject(i)
+                            ?: continue
 
-                    val id = obj.optInt("stream_id", -1)
+                    val id = obj.optInt(
+                        "stream_id",
+                        -1
+                    )
+
                     if (id < 0) continue
 
                     channelList.add(
                         LiveChannelItem(
                             id = id,
                             name = obj.optString(
-                                "name", "Unnamed channel"
+                                "name",
+                                "Unnamed channel"
                             ),
                             categoryId = obj.optString(
                                 "category_id"
                             ),
                             extension = obj.optString(
-                                "container_extension", "ts"
+                                "container_extension",
+                                "ts"
                             ),
-                            logo = obj.optString("stream_icon"),
+                            logo = obj.optString(
+                                "stream_icon"
+                            ),
                             epgId = obj.optString(
                                 "epg_channel_id"
                             )
@@ -237,20 +318,30 @@ fun LiveTvScreen(
                     )
                 }
 
-                Pair(categoryList, channelList)
+                Pair(
+                    categoryList,
+                    channelList
+                )
             }
 
             categories = result.first
             channels = result.second
+
         } catch (e: Exception) {
-            errorText = "Unable to load Live TV: " +
-                (e.localizedMessage ?: "Unknown error")
+            errorText =
+                "Unable to load Live TV: " +
+                    (
+                        e.localizedMessage
+                            ?: "Unknown error"
+                    )
         } finally {
             loading = false
         }
     }
 
-    BackHandler(enabled = selectedChannel != null) {
+    BackHandler(
+        enabled = selectedChannel != null
+    ) {
         selectedChannel = null
     }
 
@@ -261,11 +352,14 @@ fun LiveTvScreen(
             .padding(16.dp)
     ) {
         Row(
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment =
+                Alignment.CenterVertically
         ) {
             OutlinedButton(
                 onClick = {
-                    if (selectedChannel != null) {
+                    if (
+                        selectedChannel != null
+                    ) {
                         selectedChannel = null
                     } else {
                         onBack()
@@ -275,17 +369,22 @@ fun LiveTvScreen(
                 Text("BACK")
             }
 
-            Spacer(Modifier.width(12.dp))
+            Spacer(
+                Modifier.width(12.dp)
+            )
 
             Text(
                 "LIVE TV",
-                style = MaterialTheme.typography.headlineSmall,
+                style = MaterialTheme
+                    .typography.headlineSmall,
                 fontWeight = FontWeight.Black,
                 color = Blue
             )
         }
 
-        Spacer(Modifier.height(12.dp))
+        Spacer(
+            Modifier.height(12.dp)
+        )
 
         val selected = selectedChannel
 
@@ -301,58 +400,79 @@ fun LiveTvScreen(
                     toggleFavourite(selected)
                 },
                 onPlay = {
-                    onPlay(
-                        channelUrl(
-                            server, username, password,
-                            selected
-                        )
-                    )
+                    playChannel(selected)
                 }
             )
         } else {
             OutlinedTextField(
                 value = search,
-                onValueChange = { search = it },
-                label = { Text("Search channels") },
+                onValueChange = {
+                    search = it
+                },
+                label = {
+                    Text("Search channels")
+                },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth()
             )
 
-            Spacer(Modifier.height(10.dp))
+            Spacer(
+                Modifier.height(10.dp)
+            )
 
             val options = listOf(
-                LiveCategoryItem("ALL", "All"),
-                LiveCategoryItem("FAV", "★ Favourites")
+                LiveCategoryItem(
+                    "ALL",
+                    "All"
+                ),
+                LiveCategoryItem(
+                    "FAV",
+                    "★ Favourites"
+                )
             ) + categories
 
             LazyRow(
                 horizontalArrangement =
                     Arrangement.spacedBy(8.dp)
             ) {
-                items(options, key = { it.id }) { category ->
+                items(
+                    options,
+                    key = { it.id }
+                ) { category ->
                     FilterChip(
                         selected =
-                            selectedCategory == category.id,
+                            selectedCategory ==
+                                category.id,
                         onClick = {
-                            selectedCategory = category.id
+                            selectedCategory =
+                                category.id
                         },
-                        label = { Text(category.name) }
+                        label = {
+                            Text(category.name)
+                        }
                     )
                 }
             }
 
-            Spacer(Modifier.height(12.dp))
+            Spacer(
+                Modifier.height(12.dp)
+            )
 
             val filtered = remember(
-                channels, selectedCategory,
-                search, favourites
+                channels,
+                selectedCategory,
+                search,
+                favourites
             ) {
                 channels.filter { channel ->
                     val categoryMatch =
                         when (selectedCategory) {
                             "ALL" -> true
+
                             "FAV" ->
-                                channel.id.toString() in favourites
+                                channel.id.toString() in
+                                    favourites
+
                             else ->
                                 channel.categoryId ==
                                     selectedCategory
@@ -360,7 +480,8 @@ fun LiveTvScreen(
 
                     categoryMatch &&
                         channel.name.contains(
-                            search, ignoreCase = true
+                            search,
+                            ignoreCase = true
                         )
                 }
             }
@@ -371,23 +492,30 @@ fun LiveTvScreen(
                 fontWeight = FontWeight.Bold
             )
 
-            Spacer(Modifier.height(8.dp))
+            Spacer(
+                Modifier.height(8.dp)
+            )
 
             if (loading) {
                 LinearProgressIndicator(
                     modifier = Modifier.fillMaxWidth()
                 )
-            } else if (errorText.isNotBlank()) {
+            } else if (
+                errorText.isNotBlank()
+            ) {
                 Text(
                     errorText,
-                    color = MaterialTheme.colorScheme.error
+                    color = MaterialTheme
+                        .colorScheme.error
                 )
             } else {
                 LazyColumn(
                     verticalArrangement =
                         Arrangement.spacedBy(8.dp),
                     contentPadding =
-                        PaddingValues(bottom = 24.dp)
+                        PaddingValues(
+                            bottom = 24.dp
+                        )
                 ) {
                     items(
                         filtered,
@@ -396,20 +524,17 @@ fun LiveTvScreen(
                         ChannelRow(
                             channel = channel,
                             isFavourite =
-                                channel.id.toString() in favourites,
+                                channel.id.toString() in
+                                    favourites,
                             onFavourite = {
                                 toggleFavourite(channel)
                             },
                             onSelect = {
-                                selectedChannel = channel
+                                selectedChannel =
+                                    channel
                             },
                             onPlay = {
-                                onPlay(
-                                    channelUrl(
-                                        server, username,
-                                        password, channel
-                                    )
-                                )
+                                playChannel(channel)
                             }
                         )
                     }
@@ -426,9 +551,14 @@ private fun ChannelLogo(
 ) {
     Box(
         modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
-            .background(Color(0xFF263250)),
-        contentAlignment = Alignment.Center
+            .clip(
+                RoundedCornerShape(12.dp)
+            )
+            .background(
+                Color(0xFF263250)
+            ),
+        contentAlignment =
+            Alignment.Center
     ) {
         Text(
             "TV",
@@ -442,7 +572,8 @@ private fun ChannelLogo(
         ) {
             AsyncImage(
                 model = url,
-                contentDescription = "Channel logo",
+                contentDescription =
+                    "Channel logo",
                 contentScale = ContentScale.Fit,
                 modifier = Modifier.fillMaxSize()
             )
@@ -470,15 +601,23 @@ private fun ChannelRow(
             }
             .border(
                 if (focused) 2.dp else 1.dp,
-                if (focused) Blue
-                else Color(0xFF293451),
+                if (focused) {
+                    Blue
+                } else {
+                    Color(0xFF293451)
+                },
                 RoundedCornerShape(14.dp)
             )
-            .clip(RoundedCornerShape(14.dp))
+            .clip(
+                RoundedCornerShape(14.dp)
+            )
             .background(Panel)
-            .clickable(onClick = onSelect)
+            .clickable(
+                onClick = onSelect
+            )
             .padding(10.dp),
-        verticalAlignment = Alignment.CenterVertically,
+        verticalAlignment =
+            Alignment.CenterVertically,
         horizontalArrangement =
             Arrangement.spacedBy(10.dp)
     ) {
@@ -487,35 +626,51 @@ private fun ChannelRow(
             Modifier.size(56.dp)
         )
 
-        Column(modifier = Modifier.weight(1f)) {
+        Column(
+            modifier = Modifier.weight(1f)
+        ) {
             Text(
                 channel.name,
                 fontWeight = FontWeight.Bold,
                 maxLines = 2,
-                overflow = TextOverflow.Ellipsis
+                overflow =
+                    TextOverflow.Ellipsis
             )
 
             Text(
                 "Live channel",
-                style = MaterialTheme.typography.bodySmall,
+                style = MaterialTheme
+                    .typography.bodySmall,
                 color = Color.LightGray
             )
         }
 
-        TextButton(onClick = onFavourite) {
+        TextButton(
+            onClick = onFavourite
+        ) {
             Text(
-                if (isFavourite) "★" else "☆",
-                color = if (isFavourite) Purple else Blue,
-                style = MaterialTheme.typography.titleLarge
+                if (isFavourite) {
+                    "★"
+                } else {
+                    "☆"
+                },
+                color = if (isFavourite) {
+                    Purple
+                } else {
+                    Blue
+                },
+                style = MaterialTheme
+                    .typography.titleLarge
             )
         }
 
         Button(
             onClick = onPlay,
-            contentPadding = PaddingValues(
-                horizontal = 12.dp,
-                vertical = 8.dp
-            )
+            contentPadding =
+                PaddingValues(
+                    horizontal = 12.dp,
+                    vertical = 8.dp
+                )
         ) {
             Text("▶")
         }
@@ -535,16 +690,21 @@ private fun ChannelDetails(
     var epg by remember(channel.id) {
         mutableStateOf<EpgResult?>(null)
     }
+
     var loading by remember(channel.id) {
         mutableStateOf(true)
     }
+
     var refreshCount by remember(channel.id) {
         mutableIntStateOf(0)
     }
 
     LaunchedEffect(
-        channel.id, server, username,
-        password, refreshCount
+        channel.id,
+        server,
+        username,
+        password,
+        refreshCount
     ) {
         loading = true
 
@@ -555,13 +715,15 @@ private fun ChannelDetails(
                 password = password,
                 streamId = channel.id,
                 epgChannelId = channel.epgId,
-                forceRefresh = refreshCount > 0
+                forceRefresh =
+                    refreshCount > 0
             )
         } catch (_: Exception) {
             epg = EpgResult(
                 programmes = emptyList(),
                 source = "",
-                message = "Unable to retrieve programme guide."
+                message =
+                    "Unable to retrieve programme guide."
             )
         } finally {
             loading = false
@@ -569,18 +731,24 @@ private fun ChannelDetails(
     }
 
     val timeFormatter = remember {
-        SimpleDateFormat("HH:mm", Locale.getDefault())
+        SimpleDateFormat(
+            "HH:mm",
+            Locale.getDefault()
+        )
     }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .verticalScroll(rememberScrollState()),
+            .verticalScroll(
+                rememberScrollState()
+            ),
         verticalArrangement =
             Arrangement.spacedBy(14.dp)
     ) {
         Row(
-            verticalAlignment = Alignment.CenterVertically,
+            verticalAlignment =
+                Alignment.CenterVertically,
             horizontalArrangement =
                 Arrangement.spacedBy(14.dp)
         ) {
@@ -589,10 +757,13 @@ private fun ChannelDetails(
                 Modifier.size(88.dp)
             )
 
-            Column(modifier = Modifier.weight(1f)) {
+            Column(
+                modifier = Modifier.weight(1f)
+            ) {
                 Text(
                     channel.name,
-                    style = MaterialTheme.typography.titleLarge,
+                    style = MaterialTheme
+                        .typography.titleLarge,
                     fontWeight = FontWeight.Bold
                 )
 
@@ -624,18 +795,22 @@ private fun ChannelDetails(
         }
 
         Row(
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment =
+                Alignment.CenterVertically
         ) {
             Text(
                 "NOW & NEXT",
-                style = MaterialTheme.typography.titleLarge,
+                style = MaterialTheme
+                    .typography.titleLarge,
                 fontWeight = FontWeight.Bold,
                 color = Blue,
                 modifier = Modifier.weight(1f)
             )
 
             TextButton(
-                onClick = { refreshCount++ },
+                onClick = {
+                    refreshCount++
+                },
                 enabled = !loading
             ) {
                 Text("↻ REFRESH")
@@ -646,6 +821,7 @@ private fun ChannelDetails(
             LinearProgressIndicator(
                 modifier = Modifier.fillMaxWidth()
             )
+
             Text(
                 "Checking programme guide...",
                 color = Color.LightGray
@@ -654,15 +830,20 @@ private fun ChannelDetails(
             val result = epg
 
             if (result != null) {
-                if (result.source.isNotBlank()) {
+                if (
+                    result.source.isNotBlank()
+                ) {
                     Text(
                         "Guide source: ${result.source}",
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme
+                            .typography.bodySmall,
                         color = Purple
                     )
                 }
 
-                if (result.programmes.isEmpty()) {
+                if (
+                    result.programmes.isEmpty()
+                ) {
                     Text(
                         result.message.ifBlank {
                             "No programme information available."
@@ -671,26 +852,38 @@ private fun ChannelDetails(
                     )
                 }
 
-                val now = System.currentTimeMillis()
+                val now =
+                    System.currentTimeMillis()
 
-                result.programmes.forEach { programme ->
+                result.programmes.forEach {
+                    programme ->
+
                     val isNow =
                         programme.startMillis <= now &&
-                        programme.endMillis > now
+                            programme.endMillis > now
 
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(14.dp))
+                            .clip(
+                                RoundedCornerShape(14.dp)
+                            )
                             .background(Panel)
                             .padding(14.dp),
                         verticalArrangement =
                             Arrangement.spacedBy(6.dp)
                     ) {
                         Text(
-                            if (isNow) "● NOW PLAYING"
-                            else "UP NEXT",
-                            color = if (isNow) Blue else Purple,
+                            if (isNow) {
+                                "● NOW PLAYING"
+                            } else {
+                                "UP NEXT"
+                            },
+                            color = if (isNow) {
+                                Blue
+                            } else {
+                                Purple
+                            },
                             fontWeight = FontWeight.Bold
                         )
 
@@ -698,23 +891,31 @@ private fun ChannelDetails(
                             programme.title.ifBlank {
                                 "Untitled programme"
                             },
-                            style =
-                                MaterialTheme.typography.titleMedium,
+                            style = MaterialTheme
+                                .typography.titleMedium,
                             fontWeight = FontWeight.Bold
                         )
 
                         Text(
                             timeFormatter.format(
-                                Date(programme.startMillis)
+                                Date(
+                                    programme.startMillis
+                                )
                             ) + " – " +
                                 timeFormatter.format(
-                                    Date(programme.endMillis)
+                                    Date(
+                                        programme.endMillis
+                                    )
                                 ),
                             color = Color.LightGray
                         )
 
-                        if (programme.description.isNotBlank()) {
-                            Text(programme.description)
+                        if (
+                            programme.description.isNotBlank()
+                        ) {
+                            Text(
+                                programme.description
+                            )
                         }
                     }
                 }
