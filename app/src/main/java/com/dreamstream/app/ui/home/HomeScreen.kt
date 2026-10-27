@@ -8,7 +8,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -21,7 +20,6 @@ private data class DashboardItem(
     val symbol: String,
     val title: String,
     val description: String,
-    val enabled: Boolean,
     val action: () -> Unit
 )
 
@@ -29,28 +27,30 @@ private data class DashboardItem(
 fun HomeScreen(
     onLiveTv: () -> Unit,
     onMovies: () -> Unit,
-    onSeries: () -> Unit
+    onSeries: () -> Unit,
+    onFavourites: () -> Unit,
+    onSettings: () -> Unit
 ) {
     val items = listOf(
         DashboardItem(
-            "▶", "LIVE TV", "Watch live channels",
-            true, onLiveTv
+            "▶", "LIVE TV",
+            "Watch live channels", onLiveTv
         ),
         DashboardItem(
-            "◆", "MOVIES", "Discover films",
-            true, onMovies
+            "◆", "MOVIES",
+            "Discover films", onMovies
         ),
         DashboardItem(
-            "▣", "SERIES", "Explore episodes",
-            true, onSeries
+            "▣", "SERIES",
+            "Explore episodes", onSeries
         ),
         DashboardItem(
-            "★", "FAVOURITES", "Coming soon",
-            false, {}
+            "★", "FAVOURITES",
+            "Your saved entertainment", onFavourites
         ),
         DashboardItem(
-            "⚙", "SETTINGS", "Coming soon",
-            false, {}
+            "⚙", "SETTINGS",
+            "Account & preferences", onSettings
         )
     )
 
@@ -70,8 +70,12 @@ fun HomeScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 20.dp, vertical = 20.dp),
-            verticalArrangement = Arrangement.spacedBy(18.dp)
+                .padding(
+                    horizontal = 20.dp,
+                    vertical = 20.dp
+                ),
+            verticalArrangement =
+                Arrangement.spacedBy(18.dp)
         ) {
             Column {
                 Text(
@@ -103,11 +107,16 @@ fun HomeScreen(
             )
 
             LazyVerticalGrid(
-                columns = GridCells.Adaptive(minSize = 170.dp),
+                columns = GridCells.Adaptive(
+                    minSize = 170.dp
+                ),
                 modifier = Modifier.weight(1f),
-                contentPadding = PaddingValues(bottom = 24.dp),
-                horizontalArrangement = Arrangement.spacedBy(14.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
+                contentPadding =
+                    PaddingValues(bottom = 24.dp),
+                horizontalArrangement =
+                    Arrangement.spacedBy(14.dp),
+                verticalArrangement =
+                    Arrangement.spacedBy(14.dp)
             ) {
                 items(items) { item ->
                     DashboardCard(item)
@@ -118,20 +127,17 @@ fun HomeScreen(
 }
 
 @Composable
-private fun DashboardCard(item: DashboardItem) {
-    var focused by remember { mutableStateOf(false) }
+private fun DashboardCard(
+    item: DashboardItem
+) {
+    var focused by remember {
+        mutableStateOf(false)
+    }
 
     val shape = RoundedCornerShape(20.dp)
 
-    val borderColor = when {
-        focused -> UltraBlue
-        item.enabled -> Color(0xFF364769)
-        else -> Color(0xFF252A3C)
-    }
-
     Button(
         onClick = item.action,
-        enabled = item.enabled,
         modifier = Modifier
             .fillMaxWidth()
             .height(160.dp)
@@ -139,33 +145,37 @@ private fun DashboardCard(item: DashboardItem) {
                 focused = it.isFocused
             }
             .border(
-                width = if (focused) 3.dp else 1.dp,
-                color = borderColor,
-                shape = shape
+                if (focused) 3.dp else 1.dp,
+                if (focused)
+                    UltraBlue
+                else
+                    Color(0xFF364769),
+                shape
             ),
         shape = shape,
         contentPadding = PaddingValues(12.dp),
         colors = ButtonDefaults.buttonColors(
-            containerColor = if (focused) {
+            containerColor = if (focused)
                 Color(0xFF253A62)
-            } else {
-                UltraSurface
-            },
-            contentColor = Color.White,
-            disabledContainerColor = Color(0xFF121625),
-            disabledContentColor = Color(0xFF67718A)
+            else
+                UltraSurface,
+            contentColor = Color.White
         )
     ) {
         Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
+            horizontalAlignment =
+                Alignment.CenterHorizontally,
+            verticalArrangement =
+                Arrangement.Center,
             modifier = Modifier.fillMaxSize()
         ) {
             Text(
                 item.symbol,
                 style = MaterialTheme.typography.headlineLarge,
-                color = if (focused) Color.White
-                else UltraBlue
+                color = if (focused)
+                    Color.White
+                else
+                    UltraBlue
             )
 
             Spacer(Modifier.height(10.dp))
