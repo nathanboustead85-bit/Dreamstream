@@ -15,6 +15,7 @@ import com.dreamstream.app.ui.live.LiveTvScreen
 import com.dreamstream.app.ui.vod.MoviesScreen
 import com.dreamstream.app.ui.vod.SeriesScreen
 import com.dreamstream.app.ui.player.VideoPlayer
+import com.dreamstream.app.ui.player.LivePlaybackChannel
 
 class MainActivity : ComponentActivity() {
 
@@ -24,18 +25,14 @@ class MainActivity : ComponentActivity() {
         setContent {
             DreamStreamTheme {
                 Surface {
-
-                    // Save current navigation screen
                     var screen by rememberSaveable {
                         mutableStateOf("login")
                     }
 
-                    // Remember which section opened the player
                     var returnScreen by rememberSaveable {
                         mutableStateOf("live")
                     }
 
-                    // Preserve IPTV connection details
                     var server by rememberSaveable {
                         mutableStateOf("")
                     }
@@ -48,12 +45,20 @@ class MainActivity : ComponentActivity() {
                         mutableStateOf("")
                     }
 
-                    // Preserve the selected video stream
                     var streamUrl by rememberSaveable {
                         mutableStateOf("")
                     }
 
-                    // Handle Back outside the video player
+                    var liveIndex by rememberSaveable {
+                        mutableIntStateOf(0)
+                    }
+
+                    var livePlaylist by remember {
+                        mutableStateOf(
+                            emptyList<LivePlaybackChannel>()
+                        )
+                    }
+
                     BackHandler(
                         enabled = screen != "login" &&
                             screen != "home" &&
@@ -63,13 +68,11 @@ class MainActivity : ComponentActivity() {
                     }
 
                     when (screen) {
-
                         "login" -> LoginScreen(
                             onLoginSuccess = { s, u, p ->
                                 server = s
                                 username = u
                                 password = p
-
                                 screen = "home"
                             }
                         )
@@ -90,13 +93,12 @@ class MainActivity : ComponentActivity() {
                             server = server,
                             username = username,
                             password = password,
-
-                            onPlay = { url ->
-                                streamUrl = url
+                            onPlay = { playlist, index ->
+                                livePlaylist = playlist
+                                liveIndex = index
                                 returnScreen = "live"
                                 screen = "player"
                             },
-
                             onBack = {
                                 screen = "home"
                             }
@@ -106,13 +108,12 @@ class MainActivity : ComponentActivity() {
                             server = server,
                             username = username,
                             password = password,
-
                             onPlay = { url ->
                                 streamUrl = url
+                                livePlaylist = emptyList()
                                 returnScreen = "movies"
                                 screen = "player"
                             },
-
                             onBack = {
                                 screen = "home"
                             }
@@ -122,13 +123,12 @@ class MainActivity : ComponentActivity() {
                             server = server,
                             username = username,
                             password = password,
-
                             onPlay = { url ->
                                 streamUrl = url
+                                livePlaylist = emptyList()
                                 returnScreen = "series"
                                 screen = "player"
                             },
-
                             onBack = {
                                 screen = "home"
                             }
@@ -136,8 +136,15 @@ class MainActivity : ComponentActivity() {
 
                         "player" -> VideoPlayer(
                             streamUrl = streamUrl,
-
+                            liveChannels = if (
+                                returnScreen == "live"
+                            ) livePlaylist else emptyList(),
+                            liveIndex = liveIndex,
+                            onLiveIndexChange = { index ->
+                                liveIndex = index
+                            },
                             onBack = {
+                                livePlaylist = emptyList()
                                 screen = returnScreen
                             }
                         )
