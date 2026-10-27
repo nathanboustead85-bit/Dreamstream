@@ -127,6 +127,7 @@ fun LiveTvScreen(
     server: String,
     username: String,
     password: String,
+    initialFavourites: Boolean = false,
     onPlay: (List<LivePlaybackChannel>, Int) -> Unit,
     onBack: () -> Unit
 ) {
@@ -162,8 +163,14 @@ fun LiveTvScreen(
         )
     }
 
-    var selectedCategory by remember {
-        mutableStateOf("ALL")
+    // Opening from the Favourites dashboard
+    // automatically selects the saved channels.
+    var selectedCategory by remember(
+        initialFavourites
+    ) {
+        mutableStateOf(
+            if (initialFavourites) "FAV" else "ALL"
+        )
     }
 
     var selectedChannel by remember {
@@ -199,9 +206,8 @@ fun LiveTvScreen(
     }
 
     fun playChannel(channel: LiveChannelItem) {
-        // Pass all channels to the player so that
-        // CH+ and CH- can switch without returning
-        // to the Live TV screen.
+        // Keep the full playlist available for
+        // channel switching in the player.
 
         val playlist = channels.map { item ->
             val categoryName = categories
@@ -374,7 +380,11 @@ fun LiveTvScreen(
             )
 
             Text(
-                "LIVE TV",
+                if (initialFavourites) {
+                    "★ LIVE FAVOURITES"
+                } else {
+                    "LIVE TV"
+                },
                 style = MaterialTheme
                     .typography.headlineSmall,
                 fontWeight = FontWeight.Black,
@@ -508,6 +518,21 @@ fun LiveTvScreen(
                     color = MaterialTheme
                         .colorScheme.error
                 )
+            } else if (filtered.isEmpty()) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        if (selectedCategory == "FAV") {
+                            "No favourite channels yet.\n" +
+                                "Add channels using the star button."
+                        } else {
+                            "No channels found."
+                        },
+                        color = Color.LightGray
+                    )
+                }
             } else {
                 LazyColumn(
                     verticalArrangement =
