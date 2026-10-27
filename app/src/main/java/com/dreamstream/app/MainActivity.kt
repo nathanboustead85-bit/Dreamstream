@@ -5,7 +5,9 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.material3.Surface
+
 import com.dreamstream.app.ui.theme.DreamStreamTheme
 import com.dreamstream.app.ui.login.LoginScreen
 import com.dreamstream.app.ui.home.HomeScreen
@@ -22,30 +24,36 @@ class MainActivity : ComponentActivity() {
         setContent {
             DreamStreamTheme {
                 Surface {
-                    var screen by remember {
+
+                    // Save current navigation screen
+                    var screen by rememberSaveable {
                         mutableStateOf("login")
                     }
 
-                    var returnScreen by remember {
+                    // Remember which section opened the player
+                    var returnScreen by rememberSaveable {
                         mutableStateOf("live")
                     }
 
-                    var server by remember {
+                    // Preserve IPTV connection details
+                    var server by rememberSaveable {
                         mutableStateOf("")
                     }
 
-                    var username by remember {
+                    var username by rememberSaveable {
                         mutableStateOf("")
                     }
 
-                    var password by remember {
+                    var password by rememberSaveable {
                         mutableStateOf("")
                     }
 
-                    var streamUrl by remember {
+                    // Preserve the selected video stream
+                    var streamUrl by rememberSaveable {
                         mutableStateOf("")
                     }
 
+                    // Handle Back outside the video player
                     BackHandler(
                         enabled = screen != "login" &&
                             screen != "home" &&
@@ -55,11 +63,13 @@ class MainActivity : ComponentActivity() {
                     }
 
                     when (screen) {
+
                         "login" -> LoginScreen(
                             onLoginSuccess = { s, u, p ->
                                 server = s
                                 username = u
                                 password = p
+
                                 screen = "home"
                             }
                         )
@@ -80,11 +90,13 @@ class MainActivity : ComponentActivity() {
                             server = server,
                             username = username,
                             password = password,
+
                             onPlay = { url ->
                                 streamUrl = url
                                 returnScreen = "live"
                                 screen = "player"
                             },
+
                             onBack = {
                                 screen = "home"
                             }
@@ -94,11 +106,13 @@ class MainActivity : ComponentActivity() {
                             server = server,
                             username = username,
                             password = password,
+
                             onPlay = { url ->
                                 streamUrl = url
                                 returnScreen = "movies"
                                 screen = "player"
                             },
+
                             onBack = {
                                 screen = "home"
                             }
@@ -108,11 +122,13 @@ class MainActivity : ComponentActivity() {
                             server = server,
                             username = username,
                             password = password,
+
                             onPlay = { url ->
                                 streamUrl = url
                                 returnScreen = "series"
                                 screen = "player"
                             },
+
                             onBack = {
                                 screen = "home"
                             }
@@ -120,6 +136,7 @@ class MainActivity : ComponentActivity() {
 
                         "player" -> VideoPlayer(
                             streamUrl = streamUrl,
+
                             onBack = {
                                 screen = returnScreen
                             }
