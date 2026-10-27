@@ -8,7 +8,9 @@ import androidx.compose.ui.unit.dp
 
 @Composable
 fun HomeScreen(
-    onLiveTv: () -> Unit
+    onLiveTv: () -> Unit,
+    onMovies: () -> Unit,
+    onSeries: () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -31,14 +33,14 @@ fun HomeScreen(
         }
 
         Button(
-            onClick = {},
+            onClick = onMovies,
             modifier = Modifier.fillMaxWidth()
         ) {
             Text("MOVIES")
         }
 
         Button(
-            onClick = {},
+            onClick = onSeries,
             modifier = Modifier.fillMaxWidth()
         ) {
             Text("SERIES")
@@ -46,16 +48,18 @@ fun HomeScreen(
 
         Button(
             onClick = {},
+            enabled = false,
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text("FAVOURITES")
+            Text("FAVOURITES - COMING SOON")
         }
 
         Button(
             onClick = {},
+            enabled = false,
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text("SETTINGS")
+            Text("SETTINGS - COMING SOON")
         }
     }
 }
