@@ -1,13 +1,24 @@
 package com.dreamstream.app.ui.vod
 
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.activity.compose.BackHandler
+import coil.compose.AsyncImage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -16,20 +27,25 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 
-private data class VodCategory(
+private val NeonBlue = Color(0xFF00C8FF)
+private val NeonPurple = Color(0xFF985BFF)
+private val DarkSurface = Color(0xFF151B30)
+
+private data class Category(
     val id: String,
     val name: String
 )
 
-private data class VodItem(
+private data class MediaItem(
     val id: Int,
     val name: String,
     val categoryId: String,
     val extension: String,
-    val description: String
+    val description: String,
+    val poster: String
 )
 
-private data class EpisodeItem(
+private data class Episode(
     val id: String,
     val title: String,
     val season: Int,
@@ -37,10 +53,11 @@ private data class EpisodeItem(
     val extension: String
 )
 
-private fun encode(value: String): String =
-    URLEncoder.encode(value, "UTF-8").replace("+", "%20")
+private fun enc(value: String): String =
+    URLEncoder.encode(value, "UTF-8")
+        .replace("+", "%20")
 
-private fun xtreamRequest(
+private fun api(
     server: String,
     username: String,
     password: String,
@@ -48,21 +65,19 @@ private fun xtreamRequest(
     extra: String = ""
 ): String {
     val endpoint = server.trimEnd('/') +
-        "/player_api.php?username=${encode(username)}" +
-        "&password=${encode(password)}" +
-        "&action=${encode(action)}" + extra
+        "/player_api.php?username=${enc(username)}" +
+        "&password=${enc(password)}" +
+        "&action=${enc(action)}$extra"
 
-    val connection = URL(endpoint).openConnection()
-        as HttpURLConnection
+    val connection = URL(endpoint)
+        .openConnection() as HttpURLConnection
 
     try {
         connection.connectTimeout = 15000
         connection.readTimeout = 30000
 
         if (connection.responseCode != 200) {
-            throw Exception(
-                "Server returned HTTP ${connection.responseCode}"
-            )
+            error("Server returned HTTP ${connection.responseCode}")
         }
 
         return connection.inputStream.bufferedReader()
@@ -72,7 +87,7 @@ private fun xtreamRequest(
     }
 }
 
-private fun streamUrl(
+private fun playbackUrl(
     server: String,
     username: String,
     password: String,
@@ -80,14 +95,13 @@ private fun streamUrl(
     id: String,
     extension: String
 ): String {
-    val safeExtension = extension.lowercase()
-        .takeIf {
-            it in listOf("mp4", "mkv", "avi", "ts", "m3u8")
-        } ?: "mp4"
+    val ext = extension.lowercase()
+        .takeIf { it in listOf("mp4", "mkv", "avi", "ts", "m3u8") }
+        ?: "mp4"
 
     return server.trimEnd('/') +
-        "/$type/${encode(username)}/${encode(password)}/" +
-        "${encode(id)}.$safeExtension"
+        "/$type/${enc(username)}/${enc(password)}/" +
+        "${enc(id)}.$ext"
 }
 
 @Composable
@@ -98,13 +112,9 @@ fun MoviesScreen(
     onPlay: (String) -> Unit,
     onBack: () -> Unit
 ) {
-    VodBrowser(
-        server = server,
-        username = username,
-        password = password,
-        isSeries = false,
-        onPlay = onPlay,
-        onBack = onBack
+    MediaBrowser(
+        server, username, password,
+        false, onPlay, onBack
     )
 }
 
@@ -116,18 +126,14 @@ fun SeriesScreen(
     onPlay: (String) -> Unit,
     onBack: () -> Unit
 ) {
-    VodBrowser(
-        server = server,
-        username = username,
-        password = password,
-        isSeries = true,
-        onPlay = onPlay,
-        onBack = onBack
+    MediaBrowser(
+        server, username, password,
+        true, onPlay, onBack
     )
 }
 
 @Composable
-private fun VodBrowser(
+private fun MediaBrowser(
     server: String,
     username: String,
     password: String,
@@ -136,81 +142,63 @@ private fun VodBrowser(
     onBack: () -> Unit
 ) {
     var categories by remember {
-        mutableStateOf<List<VodCategory>>(emptyList())
+        mutableStateOf<List<Category>>(emptyList())
     }
-    var entries by remember {
-        mutableStateOf<List<VodItem>>(emptyList())
+    var media by remember {
+        mutableStateOf<List<MediaItem>>(emptyList())
     }
-    var selectedCategory by remember {
-        mutableStateOf<String?>(null)
-    }
-    var selectedItem by remember {
-        mutableStateOf<VodItem?>(null)
+    var category by remember { mutableStateOf("ALL") }
+    var selected by remember {
+        mutableStateOf<MediaItem?>(null)
     }
     var episodes by remember {
-        mutableStateOf<List<EpisodeItem>>(emptyList())
+        mutableStateOf<List<Episode>>(emptyList())
     }
-    var selectedSeason by remember {
-        mutableIntStateOf(-1)
-    }
-    var details by remember { mutableStateOf("") }
-    var query by remember { mutableStateOf("") }
+    var season by remember { mutableIntStateOf(-1) }
+    var description by remember { mutableStateOf("") }
+    var search by remember { mutableStateOf("") }
     var loading by remember { mutableStateOf(true) }
     var detailLoading by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf("") }
+    var errorText by remember { mutableStateOf("") }
 
     LaunchedEffect(server, username, password, isSeries) {
         loading = true
-        error = ""
-        selectedCategory = null
-        selectedItem = null
-        episodes = emptyList()
+        errorText = ""
 
         try {
-            val data = withContext(Dispatchers.IO) {
-                val categoryAction = if (isSeries) {
-                    "get_series_categories"
-                } else {
-                    "get_vod_categories"
-                }
-                val listAction = if (isSeries) {
-                    "get_series"
-                } else {
-                    "get_vod_streams"
-                }
+            val result = withContext(Dispatchers.IO) {
+                val categoryAction =
+                    if (isSeries) "get_series_categories"
+                    else "get_vod_categories"
+
+                val listAction =
+                    if (isSeries) "get_series"
+                    else "get_vod_streams"
 
                 val categoryJson = JSONArray(
-                    xtreamRequest(
-                        server, username, password,
-                        categoryAction
-                    )
+                    api(server, username, password, categoryAction)
                 )
-                val itemJson = JSONArray(
-                    xtreamRequest(
-                        server, username, password,
-                        listAction
-                    )
+                val mediaJson = JSONArray(
+                    api(server, username, password, listAction)
                 )
 
-                val parsedCategories = mutableListOf<VodCategory>()
-                val parsedItems = mutableListOf<VodItem>()
+                val parsedCategories = mutableListOf<Category>()
+                val parsedMedia = mutableListOf<MediaItem>()
 
                 for (i in 0 until categoryJson.length()) {
                     val obj = categoryJson.optJSONObject(i)
                         ?: continue
 
                     parsedCategories.add(
-                        VodCategory(
-                            id = obj.optString("category_id"),
-                            name = obj.optString(
-                                "category_name", "Other"
-                            )
+                        Category(
+                            obj.optString("category_id"),
+                            obj.optString("category_name", "Other")
                         )
                     )
                 }
 
-                for (i in 0 until itemJson.length()) {
-                    val obj = itemJson.optJSONObject(i)
+                for (i in 0 until mediaJson.length()) {
+                    val obj = mediaJson.optJSONObject(i)
                         ?: continue
 
                     val id = obj.optInt(
@@ -219,98 +207,91 @@ private fun VodBrowser(
                     )
                     if (id < 0) continue
 
-                    parsedItems.add(
-                        VodItem(
+                    parsedMedia.add(
+                        MediaItem(
                             id = id,
-                            name = obj.optString(
-                                "name", "Untitled"
-                            ),
-                            categoryId = obj.optString(
-                                "category_id"
-                            ),
+                            name = obj.optString("name", "Untitled"),
+                            categoryId = obj.optString("category_id"),
                             extension = obj.optString(
                                 "container_extension", "mp4"
                             ),
                             description = obj.optString(
                                 "plot",
                                 obj.optString("description", "")
-                            )
+                            ),
+                            poster = if (isSeries) {
+                                obj.optString("cover")
+                            } else {
+                                obj.optString("stream_icon")
+                            }
                         )
                     )
                 }
 
-                Pair(parsedCategories, parsedItems)
+                Pair(parsedCategories, parsedMedia)
             }
 
-            categories = data.first
-            entries = data.second
+            categories = result.first
+            media = result.second
         } catch (e: Exception) {
-            error = "Unable to load content: " +
+            errorText = "Unable to load library: " +
                 (e.localizedMessage ?: "Unknown error")
         } finally {
             loading = false
         }
     }
 
-    LaunchedEffect(selectedItem, isSeries) {
-        val item = selectedItem ?: return@LaunchedEffect
+    LaunchedEffect(selected, isSeries) {
+        val item = selected ?: return@LaunchedEffect
 
-        details = item.description
+        description = item.description
         episodes = emptyList()
-        selectedSeason = -1
+        season = -1
         detailLoading = true
-        error = ""
+        errorText = ""
 
         try {
-            val result = withContext(Dispatchers.IO) {
-                val action = if (isSeries) {
-                    "get_series_info"
-                } else {
-                    "get_vod_info"
-                }
-
+            val info = withContext(Dispatchers.IO) {
                 JSONObject(
-                    xtreamRequest(
-                        server, username, password,
-                        action,
-                        if (isSeries) {
-                            "&series_id=${item.id}"
-                        } else {
-                            "&vod_id=${item.id}"
-                        }
+                    api(
+                        server,
+                        username,
+                        password,
+                        if (isSeries) "get_series_info"
+                        else "get_vod_info",
+                        if (isSeries) "&series_id=${item.id}"
+                        else "&vod_id=${item.id}"
                     )
                 )
             }
 
-            val info = result.optJSONObject("info")
-            details = info?.optString(
-                "plot",
-                item.description
-            ) ?: item.description
+            description = info.optJSONObject("info")
+                ?.optString("plot", item.description)
+                ?: item.description
 
             if (isSeries) {
-                val episodeObject = result.optJSONObject("episodes")
-                val found = mutableListOf<EpisodeItem>()
+                val found = mutableListOf<Episode>()
+                val episodeGroups = info.optJSONObject("episodes")
 
-                if (episodeObject != null) {
-                    val seasonKeys = episodeObject.keys()
+                if (episodeGroups != null) {
+                    val keys = episodeGroups.keys()
 
-                    while (seasonKeys.hasNext()) {
-                        val key = seasonKeys.next()
+                    while (keys.hasNext()) {
+                        val key = keys.next()
                         val seasonNumber = key.toIntOrNull() ?: 0
-                        val array = episodeObject.optJSONArray(key)
+                        val array = episodeGroups.optJSONArray(key)
                             ?: continue
 
                         for (i in 0 until array.length()) {
                             val ep = array.optJSONObject(i)
                                 ?: continue
-                            val episodeId = ep.optString("id")
+                            val id = ep.optString("id")
 
-                            if (episodeId.isBlank()) continue
+                            if (id.isBlank()) continue
 
                             found.add(
-                                EpisodeItem(
-                                    id = episodeId,
+                                Episode(
+                                    id = id,
                                     title = ep.optString(
                                         "title", "Episode ${i + 1}"
                                     ),
@@ -328,14 +309,13 @@ private fun VodBrowser(
                 }
 
                 episodes = found.sortedWith(
-                    compareBy<EpisodeItem> { it.season }
+                    compareBy<Episode> { it.season }
                         .thenBy { it.number }
                 )
-
-                selectedSeason = episodes.firstOrNull()?.season ?: -1
+                season = episodes.firstOrNull()?.season ?: -1
             }
         } catch (e: Exception) {
-            error = "Unable to load details: " +
+            errorText = "Unable to load details: " +
                 (e.localizedMessage ?: "Unknown error")
         } finally {
             detailLoading = false
@@ -343,157 +323,223 @@ private fun VodBrowser(
     }
 
     fun goBack() {
-        when {
-            selectedItem != null -> {
-                selectedItem = null
-                error = ""
-            }
-            selectedCategory != null -> {
-                selectedCategory = null
-                query = ""
-            }
-            else -> onBack()
+        if (selected != null) {
+            selected = null
+            errorText = ""
+        } else {
+            onBack()
         }
+    }
+
+    BackHandler(enabled = selected != null) {
+        goBack()
     }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .background(Color(0xFF080B16))
             .padding(16.dp)
     ) {
-        Button(onClick = { goBack() }) {
-            Text("BACK")
-        }
+        Row(
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            OutlinedButton(onClick = { goBack() }) {
+                Text("BACK")
+            }
 
-        Text(
-            when {
-                selectedItem != null -> selectedItem!!.name
-                isSeries -> "TV SERIES"
-                else -> "MOVIES"
-            },
-            style = MaterialTheme.typography.headlineSmall
-        )
+            Spacer(Modifier.width(12.dp))
+
+            Text(
+                if (isSeries) "SERIES" else "MOVIES",
+                style = MaterialTheme.typography.headlineSmall,
+                color = NeonBlue,
+                fontWeight = FontWeight.Bold
+            )
+        }
 
         Spacer(Modifier.height(12.dp))
 
         if (loading || detailLoading) {
-            CircularProgressIndicator()
+            LinearProgressIndicator(
+                modifier = Modifier.fillMaxWidth()
+            )
         }
 
-        if (error.isNotBlank()) {
+        if (errorText.isNotBlank()) {
             Text(
-                error,
+                errorText,
                 color = MaterialTheme.colorScheme.error
             )
         }
 
-        if (!loading && selectedItem == null) {
-            if (selectedCategory == null) {
-                LazyColumn {
-                    item {
-                        ListEntry("ALL CONTENT (${entries.size})") {
-                            selectedCategory = "ALL"
-                        }
-                    }
+        val current = selected
 
-                    items(categories) { category ->
-                        ListEntry(category.name) {
-                            selectedCategory = category.id
-                        }
-                    }
-                }
-            } else {
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = { query = it },
-                    label = { Text("Search titles") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true
-                )
+        if (current == null) {
+            OutlinedTextField(
+                value = search,
+                onValueChange = { search = it },
+                label = { Text("Search titles") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
 
-                val filtered = entries.filter {
-                    (selectedCategory == "ALL" ||
-                        it.categoryId == selectedCategory) &&
-                        it.name.contains(query, ignoreCase = true)
-                }
+            Spacer(Modifier.height(10.dp))
 
-                Text("${filtered.size} titles")
+            val options = listOf(Category("ALL", "All")) +
+                categories
 
-                LazyColumn {
-                    items(filtered) { item ->
-                        ListEntry(item.name) {
-                            selectedItem = item
-                        }
-                    }
+            LazyRowCategories(
+                options = options,
+                selectedId = category,
+                onSelect = { category = it }
+            )
+
+            Spacer(Modifier.height(12.dp))
+
+            val filtered = remember(media, category, search) {
+                media.filter {
+                    (category == "ALL" ||
+                        it.categoryId == category) &&
+                        it.name.contains(search, ignoreCase = true)
                 }
             }
-        }
 
-        val item = selectedItem
+            Text(
+                "${filtered.size} titles",
+                color = Color.LightGray
+            )
 
-        if (item != null && !detailLoading) {
-            if (details.isNotBlank()) {
-                Text(details)
-                Spacer(Modifier.height(12.dp))
-            }
+            Spacer(Modifier.height(10.dp))
 
-            if (!isSeries) {
-                Button(
-                    onClick = {
-                        onPlay(
-                            streamUrl(
-                                server, username, password,
-                                "movie",
-                                item.id.toString(),
-                                item.extension
-                            )
-                        )
-                    }
+            if (!loading) {
+                LazyVerticalGrid(
+                    columns = GridCells.Adaptive(135.dp),
+                    modifier = Modifier.fillMaxSize(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                    contentPadding = PaddingValues(bottom = 24.dp)
                 ) {
-                    Text("PLAY MOVIE")
-                }
-            } else {
-                if (episodes.isEmpty()) {
-                    Text("No episodes available for this series.")
-                } else {
-                    val seasons = episodes.map { it.season }.distinct()
-
-                    Text("SELECT SEASON")
-
-                    LazyColumn(
-                        modifier = Modifier.heightIn(max = 140.dp)
-                    ) {
-                        items(seasons) { season ->
-                            ListEntry(
-                                "Season $season" +
-                                    if (selectedSeason == season) " ✓"
-                                    else ""
-                            ) {
-                                selectedSeason = season
-                            }
+                    items(
+                        count = filtered.size,
+                        key = { filtered[it].id }
+                    ) { index ->
+                        PosterCard(filtered[index]) {
+                            selected = filtered[index]
                         }
                     }
+                }
+            }
+        } else {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    PosterArtwork(
+                        url = current.poster,
+                        title = current.name,
+                        modifier = Modifier
+                            .width(125.dp)
+                            .height(185.dp)
+                    )
 
-                    Text("EPISODES")
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement =
+                            Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text(
+                            current.name,
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold
+                        )
 
-                    LazyColumn {
-                        items(
-                            episodes.filter {
-                                it.season == selectedSeason
-                            }
-                        ) { episode ->
-                            ListEntry(
-                                "${episode.number}. ${episode.title}"
-                            ) {
-                                onPlay(
-                                    streamUrl(
-                                        server,
-                                        username,
-                                        password,
-                                        "series",
-                                        episode.id,
-                                        episode.extension
+                        if (!isSeries) {
+                            Button(
+                                onClick = {
+                                    onPlay(
+                                        playbackUrl(
+                                            server, username, password,
+                                            "movie",
+                                            current.id.toString(),
+                                            current.extension
+                                        )
                                     )
+                                }
+                            ) {
+                                Text("▶ PLAY MOVIE")
+                            }
+                        } else {
+                            Text(
+                                "${episodes.size} episodes",
+                                color = NeonPurple
+                            )
+                        }
+                    }
+                }
+
+                if (description.isNotBlank()) {
+                    Text(
+                        description,
+                        color = Color(0xFFCED6E8)
+                    )
+                }
+
+                if (isSeries && !detailLoading) {
+                    if (episodes.isEmpty()) {
+                        Text("No episodes available.")
+                    } else {
+                        Text(
+                            "SEASONS",
+                            color = NeonBlue,
+                            fontWeight = FontWeight.Bold
+                        )
+
+                        val seasons = episodes.map {
+                            it.season
+                        }.distinct()
+
+                        LazyRowCategories(
+                            options = seasons.map {
+                                Category(it.toString(), "Season $it")
+                            },
+                            selectedId = season.toString(),
+                            onSelect = {
+                                season = it.toIntOrNull() ?: season
+                            }
+                        )
+
+                        Text(
+                            "EPISODES",
+                            color = NeonBlue,
+                            fontWeight = FontWeight.Bold
+                        )
+
+                        episodes.filter {
+                            it.season == season
+                        }.forEach { episode ->
+                            OutlinedButton(
+                                onClick = {
+                                    onPlay(
+                                        playbackUrl(
+                                            server, username, password,
+                                            "series",
+                                            episode.id,
+                                            episode.extension
+                                        )
+                                    )
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    "${episode.number}. ${episode.title}",
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             }
                         }
@@ -505,18 +551,95 @@ private fun VodBrowser(
 }
 
 @Composable
-private fun ListEntry(
-    title: String,
+private fun LazyRowCategories(
+    options: List<Category>,
+    selectedId: String,
+    onSelect: (String) -> Unit
+) {
+    androidx.compose.foundation.lazy.LazyRow(
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        items(options.size) { index ->
+            val option = options[index]
+
+            FilterChip(
+                selected = option.id == selectedId,
+                onClick = { onSelect(option.id) },
+                label = { Text(option.name) }
+            )
+        }
+    }
+}
+
+@Composable
+private fun PosterCard(
+    item: MediaItem,
     onClick: () -> Unit
 ) {
-    Column {
-        Text(
-            title,
+    var focused by remember { mutableStateOf(false) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .onFocusChanged { focused = it.isFocused }
+            .border(
+                if (focused) 2.dp else 1.dp,
+                if (focused) NeonBlue else Color(0xFF28334C),
+                RoundedCornerShape(14.dp)
+            )
+            .clip(RoundedCornerShape(14.dp))
+            .clickable(onClick = onClick)
+            .background(DarkSurface)
+            .padding(7.dp)
+    ) {
+        PosterArtwork(
+            url = item.poster,
+            title = item.name,
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable(onClick = onClick)
-                .padding(vertical = 15.dp)
+                .aspectRatio(2f / 3f)
         )
-        HorizontalDivider()
+
+        Spacer(Modifier.height(8.dp))
+
+        Text(
+            item.name,
+            maxLines = 2,
+            minLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.SemiBold
+        )
+    }
+}
+
+@Composable
+private fun PosterArtwork(
+    url: String,
+    title: String,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(Color(0xFF263250)),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            "◆",
+            style = MaterialTheme.typography.headlineLarge,
+            color = NeonPurple
+        )
+
+        if (url.startsWith("http://") ||
+            url.startsWith("https://")
+        ) {
+            AsyncImage(
+                model = url,
+                contentDescription = "Poster for $title",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
     }
 }
