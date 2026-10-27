@@ -19,6 +19,8 @@ import com.dreamstream.app.ui.vod.MoviesScreen
 import com.dreamstream.app.ui.vod.SeriesScreen
 import com.dreamstream.app.ui.player.VideoPlayer
 import com.dreamstream.app.ui.player.LivePlaybackChannel
+import com.dreamstream.app.ui.favourites.FavouritesScreen
+import com.dreamstream.app.ui.settings.SettingsScreen
 
 class MainActivity : ComponentActivity() {
 
@@ -31,7 +33,7 @@ class MainActivity : ComponentActivity() {
             ) ||
             (
                 resources.configuration.uiMode and
-                Configuration.UI_MODE_TYPE_MASK
+                    Configuration.UI_MODE_TYPE_MASK
             ) == Configuration.UI_MODE_TYPE_TELEVISION
 
         setContent {
@@ -72,9 +74,9 @@ class MainActivity : ComponentActivity() {
                     }
 
                     BackHandler(
-                        enabled = screen != "login" &&
-                            screen != "home" &&
-                            screen != "player"
+                        enabled = screen !in listOf(
+                            "login", "home", "player"
+                        )
                     ) {
                         screen = "home"
                     }
@@ -112,64 +114,129 @@ class MainActivity : ComponentActivity() {
                                     },
                                     onSeries = {
                                         screen = "series"
+                                    },
+                                    onFavourites = {
+                                        screen = "favourites"
+                                    },
+                                    onSettings = {
+                                        screen = "settings"
                                     }
                                 )
                             }
                         }
 
-                        "live" -> LiveTvScreen(
+                        "favourites" -> FavouritesScreen(
+                            onLive = {
+                                screen = "live_favourites"
+                            },
+                            onMovies = {
+                                screen = "movie_favourites"
+                            },
+                            onSeries = {
+                                screen = "series_favourites"
+                            },
+                            onBack = {
+                                screen = "home"
+                            }
+                        )
+
+                        "settings" -> SettingsScreen(
+                            server = server,
+                            username = username,
+                            onLogout = {
+                                server = ""
+                                username = ""
+                                password = ""
+                                streamUrl = ""
+                                livePlaylist = emptyList()
+                                screen = "login"
+                            },
+                            onBack = {
+                                screen = "home"
+                            }
+                        )
+
+                        "live", "live_favourites" -> LiveTvScreen(
                             server = server,
                             username = username,
                             password = password,
+                            initialFavourites =
+                                screen == "live_favourites",
                             onPlay = { playlist, index ->
                                 livePlaylist = playlist
                                 liveIndex = index
-                                returnScreen = "live"
+                                returnScreen = screen
                                 screen = "player"
                             },
                             onBack = {
-                                screen = "home"
+                                screen = if (
+                                    screen == "live_favourites"
+                                ) {
+                                    "favourites"
+                                } else {
+                                    "home"
+                                }
                             }
                         )
 
-                        "movies" -> MoviesScreen(
+                        "movies", "movie_favourites" -> MoviesScreen(
                             server = server,
                             username = username,
                             password = password,
+                            initialFavourites =
+                                screen == "movie_favourites",
                             onPlay = { url ->
                                 streamUrl = url
                                 livePlaylist = emptyList()
-                                returnScreen = "movies"
+                                returnScreen = screen
                                 screen = "player"
                             },
                             onBack = {
-                                screen = "home"
+                                screen = if (
+                                    screen == "movie_favourites"
+                                ) {
+                                    "favourites"
+                                } else {
+                                    "home"
+                                }
                             }
                         )
 
-                        "series" -> SeriesScreen(
+                        "series", "series_favourites" -> SeriesScreen(
                             server = server,
                             username = username,
                             password = password,
+                            initialFavourites =
+                                screen == "series_favourites",
                             onPlay = { url ->
                                 streamUrl = url
                                 livePlaylist = emptyList()
-                                returnScreen = "series"
+                                returnScreen = screen
                                 screen = "player"
                             },
                             onBack = {
-                                screen = "home"
+                                screen = if (
+                                    screen == "series_favourites"
+                                ) {
+                                    "favourites"
+                                } else {
+                                    "home"
+                                }
                             }
                         )
 
                         "player" -> VideoPlayer(
                             streamUrl = streamUrl,
                             liveChannels = if (
-                                returnScreen == "live"
-                            ) livePlaylist else emptyList(),
+                                returnScreen.startsWith("live")
+                            ) {
+                                livePlaylist
+                            } else {
+                                emptyList()
+                            },
                             liveIndex = liveIndex,
-                            onLiveIndexChange = { index ->
-                                liveIndex = index
+                            onLiveIndexChange = {
+                                liveIndex = it
                             },
                             onBack = {
                                 livePlaylist = emptyList()
