@@ -9,6 +9,8 @@ import com.dreamstream.app.ui.login.LoginScreen
 import com.dreamstream.app.ui.home.HomeScreen
 import com.dreamstream.app.ui.live.LiveTvScreen
 import com.dreamstream.app.ui.player.VideoPlayer
+import com.dreamstream.app.ui.vod.MoviesScreen
+import com.dreamstream.app.ui.vod.SeriesScreen
 
 class MainActivity : ComponentActivity() {
 
@@ -17,17 +19,20 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             var screen by remember { mutableStateOf("login") }
+            var returnScreen by remember { mutableStateOf("live") }
 
             var server by remember { mutableStateOf("") }
             var username by remember { mutableStateOf("") }
             var password by remember { mutableStateOf("") }
-
             var streamUrl by remember { mutableStateOf("") }
 
             BackHandler(
-                enabled = screen == "live" || screen == "player"
+                enabled = screen != "login" && screen != "home"
             ) {
-                screen = if (screen == "player") "live" else "home"
+                screen = when (screen) {
+                    "player" -> returnScreen
+                    else -> "home"
+                }
             }
 
             when (screen) {
@@ -41,7 +46,9 @@ class MainActivity : ComponentActivity() {
                 )
 
                 "home" -> HomeScreen(
-                    onLiveTv = { screen = "live" }
+                    onLiveTv = { screen = "live" },
+                    onMovies = { screen = "movies" },
+                    onSeries = { screen = "series" }
                 )
 
                 "live" -> LiveTvScreen(
@@ -50,6 +57,31 @@ class MainActivity : ComponentActivity() {
                     password = password,
                     onPlay = { url ->
                         streamUrl = url
+                        returnScreen = "live"
+                        screen = "player"
+                    },
+                    onBack = { screen = "home" }
+                )
+
+                "movies" -> MoviesScreen(
+                    server = server,
+                    username = username,
+                    password = password,
+                    onPlay = { url ->
+                        streamUrl = url
+                        returnScreen = "movies"
+                        screen = "player"
+                    },
+                    onBack = { screen = "home" }
+                )
+
+                "series" -> SeriesScreen(
+                    server = server,
+                    username = username,
+                    password = password,
+                    onPlay = { url ->
+                        streamUrl = url
+                        returnScreen = "series"
                         screen = "player"
                     },
                     onBack = { screen = "home" }
